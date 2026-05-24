@@ -30,12 +30,17 @@ def get_arguments():
     parser.set_defaults(freeze_dino=True)
     parser.add_argument('--use_vision_blocks', action='store_true', help='Whether to use additional vision transformer blocks after DINO ViT backbone')
     parser.add_argument('--aud_backbone_type', default='resnet18', type=str,
-                        choices=['resnet18', 'whisper'], help='resnet18 | whisper')
+                        choices=['resnet18', 'whisper', 'beats'], help='resnet18 | whisper | beats')
     parser.add_argument('--whisper_model_name', default='openai/whisper-base', type=str,
                         help='Whisper model name from HuggingFace')
     parser.add_argument('--freeze_whisper', action='store_true',
                         help='Whether to freeze the Whisper audio backbone during training')
     parser.set_defaults(freeze_whisper=True)
+    parser.add_argument('--beats_checkpoint', default='pretrained/beats/BEATs_iter3_plus_AS2M.pt', type=str,
+                        help='Path to BEATs checkpoint')
+    parser.add_argument('--freeze_beats', action='store_true',
+                        help='Whether to freeze the BEATs audio backbone during training')
+    parser.set_defaults(freeze_beats=True)
     parser.add_argument('--use_audio_blocks', action='store_true',
                         help='Whether to use additional audio transformer blocks after Whisper encoder')
     parser.add_argument('--tri_map',action='store_true')

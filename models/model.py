@@ -7,6 +7,7 @@ import math
 import sys
 sys.path.append('..')
 from networks import base_models
+from networks.beats import BEATsWrapper
 
 
 class AVENet(nn.Module):
@@ -20,6 +21,7 @@ class AVENet(nn.Module):
         self.use_audio_blocks = args.use_audio_blocks
         self.freeze_dino = args.freeze_dino
         self.freeze_whisper = args.freeze_whisper
+        self.freeze_beats = args.freeze_beats
         self.trimap = args.tri_map
         self.epsilon = args.epsilon
         self.epsilon2 = args.epsilon2
@@ -58,6 +60,19 @@ class AVENet(nn.Module):
                     batch_first=True)
                 self.audio_blocks = nn.TransformerEncoder(encoder_layer, num_layers=2)
             self.aud_proj = nn.Linear(whisper_model.config.d_model, 512)
+
+        elif self.aud_backbone_type == 'beats':
+            self.aud_backbone = BEATsWrapper(args.beats_checkpoint)
+            if self.freeze_beats:
+                for param in self.aud_backbone.parameters():
+                    param.requires_grad = False
+            if self.use_audio_blocks:
+                encoder_layer = nn.TransformerEncoderLayer(
+                    d_model=self.aud_backbone.output_dim,
+                    nhead=self.aud_backbone.num_attention_heads,
+                    batch_first=True)
+                self.audio_blocks = nn.TransformerEncoder(encoder_layer, num_layers=2)
+            self.aud_proj = nn.Linear(self.aud_backbone.output_dim, 512)
 
         self.maxpool = nn.AdaptiveMaxPool2d((1, 1))
 
@@ -126,6 +141,19 @@ class AVENet(nn.Module):
             if self.use_audio_blocks:
                 audio_tokens = self.audio_blocks(audio_tokens) # B x T x C
             aud_feat = audio_tokens.mean(dim=1) # B x C
+            aud_feat = self.aud_proj(aud_feat)
+        elif self.aud_backbone_type == 'beats':
+            audio_tokens, padding_mask = self.aud_backbone(aud) # B x T x C
+            if self.use_audio_blocks:
+                audio_tokens = self.audio_blocks(
+                    audio_tokens, src_key_padding_mask=padding_mask) # B x T x C
+            if padding_mask is not None:
+                audio_tokens = audio_tokens.masked_fill(
+                    padding_mask.unsqueeze(-1), 0)
+                valid_tokens = (~padding_mask).sum(dim=1).clamp_min(1).unsqueeze(-1)
+                aud_feat = audio_tokens.sum(dim=1) / valid_tokens # B x C
+            else:
+                aud_feat = audio_tokens.mean(dim=1) # B x C
             aud_feat = self.aud_proj(aud_feat)
         else:
             aud_feat = self.aud_backbone(aud) # B x C x H x W

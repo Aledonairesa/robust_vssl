@@ -201,6 +201,7 @@ class GetAudioVideoDataset(Dataset):
 
         self.AmplitudeToDB = audio_T.AmplitudeToDB()
         self.whisper_sample_rate = 16000
+        self.beats_sample_rate = 16000
         self.whisper_feature_extractor = None
         if self.args.aud_backbone_type == 'whisper':
             self.whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(
@@ -295,12 +296,15 @@ class GetAudioVideoDataset(Dataset):
         img = Image.open(path).convert('RGB')
         return img
 
-    def _apply_specaug_if_enabled(self, audio_features, time_mask_param, freq_mask_param):
+    def _apply_audaug_if_enabled(self, audio_features, time_mask_param, freq_mask_param):
         if (self.args.aud_aug=='SpecAug') and (self.mode=='train') and (random.random() < 0.8):
-            maskings = nn.Sequential(
-                audio_T.TimeMasking(time_mask_param=time_mask_param),
-                audio_T.FrequencyMasking(freq_mask_param=freq_mask_param)
-                )
+            if self.args.aud_backbone_type == 'beats':
+                maskings = audio_T.TimeMasking(time_mask_param=time_mask_param)
+            else:
+                maskings = nn.Sequential(
+                    audio_T.TimeMasking(time_mask_param=time_mask_param),
+                    audio_T.FrequencyMasking(freq_mask_param=freq_mask_param)
+                    )
             audio_features = maskings(audio_features)
 
         return audio_features
@@ -318,9 +322,19 @@ class GetAudioVideoDataset(Dataset):
                 return_tensors='pt'
             ).input_features
             input_features = input_features.squeeze(0)
-            input_features = self._apply_specaug_if_enabled(
+            input_features = self._apply_audaug_if_enabled(
                 input_features, time_mask_param=180, freq_mask_param=11)
             return input_features
+
+        if self.args.aud_backbone_type == 'beats':
+            if samples.shape[0] > 1:
+                samples = torch.mean(samples, dim=0, keepdim=True)
+            if samplerate != self.beats_sample_rate:
+                samples = torchaudio.functional.resample(
+                    samples, samplerate, self.beats_sample_rate)
+            samples = self._apply_audaug_if_enabled(
+                samples, time_mask_param=self.beats_sample_rate, freq_mask_param=None)
+            return samples.squeeze(0)
 
         spectrogram = audio_T.MelSpectrogram(
                 sample_rate=samplerate,
@@ -330,7 +344,7 @@ class GetAudioVideoDataset(Dataset):
                 normalized=True
             )(samples)
 
-        spectrogram = self._apply_specaug_if_enabled(
+        spectrogram = self._apply_audaug_if_enabled(
             spectrogram, time_mask_param=180, freq_mask_param=35)
 
         return self.AmplitudeToDB(spectrogram)
