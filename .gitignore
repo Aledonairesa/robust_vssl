@@ -6,3 +6,5 @@ pretrained/**/*
 *.pt
 *.pth
 *.pth.tar
+
+.vscode/
