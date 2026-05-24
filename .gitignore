@@ -1,0 +1,8 @@
+pretrained/**/*
+!pretrained/.gitkeep
+!pretrained/beats/
+!pretrained/beats/.gitkeep
+
+*.pt
+*.pth
+*.pth.tar
