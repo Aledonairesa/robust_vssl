@@ -179,7 +179,7 @@ def set_path(args):
     elif args.test: 
         exp_path = os.path.dirname(os.path.dirname(args.test))
     else:
-        exp_path = 'ckpts/{args.exp_name}'.format(args=args)
+        exp_path = os.path.join(args.output_dir, args.exp_name)
         
         if not os.path.exists(exp_path):
             os.makedirs(exp_path)
