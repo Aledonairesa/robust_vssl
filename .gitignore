@@ -8,3 +8,6 @@ pretrained/**/*
 *.pth.tar
 
 .vscode/
+
+__pycache__/
+*.py[cod]
