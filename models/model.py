@@ -103,7 +103,7 @@ class AVENet(nn.Module):
                     nn.init.normal_(m.weight, mean=1, std=0.02)
                     nn.init.constant_(m.bias, 0)
 
-    def forward(self, image, aud):
+    def forward(self, image, aud, return_embeddings=False):
 
         B = image.shape[0]
         mask = (1 - 100 * torch.eye(B,B)).to(image.device)
@@ -185,5 +185,10 @@ class AVENet(nn.Module):
             logits = torch.cat((sim_pos,sim_neg_easy,sim_neg_hard),1)/0.07
         else:
             logits = torch.cat((sim_pos,sim_neg_easy),1)/0.07 # 0.07 is temperature
+
+        if return_embeddings:
+            img_emb = self.maxpool(img_feat).view(B, -1)
+            img_emb = F.normalize(img_emb, dim=1)
+            return S_diag, logits, mask_pos, neg, S_cross_pooled, img_emb, aud_feat
 
         return S_diag, logits, mask_pos, neg, S_cross_pooled

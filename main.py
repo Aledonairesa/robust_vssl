@@ -466,6 +466,9 @@ def validate(val_loader, model, criterion, device, epoch, args):
     has_annotations = getattr(val_loader.dataset, 'has_annotations', False)
     annotation_type = getattr(val_loader.dataset, 'annotation_type', None)
     val_ious_meter = []
+    sample_names = []
+    image_embs = []
+    audio_embs = []
     tic = time.time()
 
     model.eval()
@@ -477,7 +480,16 @@ def validate(val_loader, model, criterion, device, epoch, args):
             image = image.to(device, non_blocking=True)
             B = image.size(0)
 
-            heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
+            if args.save_val_embeddings:
+                heatmap, out, Pos, Neg, out_ref, img_emb, aud_emb = model(
+                    image.float(), spec.float(), return_embeddings=True)
+                sample_names.extend(list(name))
+                image_embs.append(
+                    img_emb.detach().cpu().numpy().astype(np.float32))
+                audio_embs.append(
+                    aud_emb.detach().cpu().numpy().astype(np.float32))
+            else:
+                heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
             target = torch.zeros(out.shape[0]).to(device, non_blocking=True).long()
             loss = criterion(out, target)
             logits_i2a = out
@@ -553,6 +565,20 @@ def validate(val_loader, model, criterion, device, epoch, args):
     if has_annotations:
         log_msg += ' MeancIoU: {0:.4f} AUC:{1:.4f}'.format(mean_ciou, auc_val)
     args.val_logger.log(log_msg + ' \t')
+
+    if args.save_val_embeddings:
+        embeddings_dir = os.path.join(args.exp_path, 'embeddings', 'val')
+        if not os.path.exists(embeddings_dir):
+            os.makedirs(embeddings_dir)
+        embeddings_path = os.path.join(
+            embeddings_dir, 'epoch_{:04d}.npz'.format(epoch))
+        np.savez_compressed(
+            embeddings_path,
+            names=np.asarray(sample_names, dtype=str),
+            image_emb=np.concatenate(image_embs, axis=0),
+            audio_emb=np.concatenate(audio_embs, axis=0),
+        )
+        print('Saved validation embeddings to {}'.format(embeddings_path))
 
     return {
         'loss': losses.avg,

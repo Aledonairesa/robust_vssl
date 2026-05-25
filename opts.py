@@ -78,6 +78,8 @@ def get_arguments():
     parser.add_argument('--test', type=str, default='', help=' ')
     parser.add_argument('--eval_freq', type=int, default=1, help=' ')
     parser.add_argument('--eval_start', type=int, default=10, help='Epoch to start validation')
+    parser.add_argument('--save_val_embeddings', action='store_true',
+                        help='Save validation image/audio embeddings once per validation epoch')
     parser.add_argument('--checkpoint_metric', default='auto', type=str,
                         choices=['auto', 'mean_ciou', 'loss', 'top1_i2a', 'top1_a2i'],
                         help='Metric for best checkpoint selection. auto uses mean_ciou when available, else loss.')
