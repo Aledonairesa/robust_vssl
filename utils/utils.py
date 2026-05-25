@@ -307,7 +307,7 @@ def calc_topk_accuracy(output, target, topk=(1,)):
     calculate top-k accuracies.
     """
     with torch.no_grad():
-        maxk = max(topk)
+        maxk = min(max(topk), output.size(1))
         batch_size = target.size(0)
 
         _, pred = output.topk(maxk, 1, True, True)
@@ -316,6 +316,7 @@ def calc_topk_accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
+            k = min(k, output.size(1))
             correct_k = correct[:k].contiguous().view(-1).float().sum(0)
             res.append(correct_k.mul_(1 / batch_size))
     return res
