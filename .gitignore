@@ -11,3 +11,5 @@ pretrained/**/*
 
 __pycache__/
 *.py[cod]
+
+outputs/
