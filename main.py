@@ -194,6 +194,26 @@ def set_path(args):
     return img_path, model_path, exp_path
 
 
+def save_embeddings(exp_path, split, epoch, names, image_embs, audio_embs,
+                    subset=None):
+    path_parts = [exp_path, 'embeddings', split]
+    if subset is not None:
+        path_parts.append(subset)
+    embeddings_dir = os.path.join(*path_parts)
+    if not os.path.exists(embeddings_dir):
+        os.makedirs(embeddings_dir)
+
+    embeddings_path = os.path.join(
+        embeddings_dir, 'epoch_{:04d}.npz'.format(epoch))
+    np.savez_compressed(
+        embeddings_path,
+        names=np.asarray(names, dtype=str),
+        image_emb=np.concatenate(image_embs, axis=0),
+        audio_emb=np.concatenate(audio_embs, axis=0),
+    )
+    print('Saved {} embeddings to {}'.format(split, embeddings_path))
+
+
 def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     batch_time = AverageMeter('Time',':.2f')
     data_time = AverageMeter('Data',':.2f')
@@ -567,18 +587,8 @@ def validate(val_loader, model, criterion, device, epoch, args):
     args.val_logger.log(log_msg + ' \t')
 
     if args.save_val_embeddings:
-        embeddings_dir = os.path.join(args.exp_path, 'embeddings', 'val')
-        if not os.path.exists(embeddings_dir):
-            os.makedirs(embeddings_dir)
-        embeddings_path = os.path.join(
-            embeddings_dir, 'epoch_{:04d}.npz'.format(epoch))
-        np.savez_compressed(
-            embeddings_path,
-            names=np.asarray(sample_names, dtype=str),
-            image_emb=np.concatenate(image_embs, axis=0),
-            audio_emb=np.concatenate(audio_embs, axis=0),
-        )
-        print('Saved validation embeddings to {}'.format(embeddings_path))
+        save_embeddings(
+            args.exp_path, 'val', epoch, sample_names, image_embs, audio_embs)
 
     return {
         'loss': losses.avg,
@@ -605,6 +615,9 @@ def test(test_loader, model, criterion, device, epoch, args):
 
     # dir for saving validationset heatmap images 
     save_dir = os.path.join(args.img_path, "test_imgs", str(epoch), args.test_set) 
+    sample_names = []
+    image_embs = []
+    audio_embs = []
 
     model.eval()
 
@@ -615,7 +628,16 @@ def test(test_loader, model, criterion, device, epoch, args):
             image = image.to(device)
             B = image.size(0)
 
-            heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
+            if args.save_test_embeddings:
+                heatmap, out, Pos, Neg, out_ref, img_emb, aud_emb = model(
+                    image.float(), spec.float(), return_embeddings=True)
+                sample_names.extend(list(name))
+                image_embs.append(
+                    img_emb.detach().cpu().numpy().astype(np.float32))
+                audio_embs.append(
+                    aud_emb.detach().cpu().numpy().astype(np.float32))
+            else:
+                heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
             target = torch.zeros(out.shape[0]).to(device, non_blocking=True).long()
             loss =  criterion(out, target)
             logits_i2a = out
@@ -714,6 +736,11 @@ def test(test_loader, model, criterion, device, epoch, args):
                     .format(epoch, loss=losses, top1_i2a=top1_meter_i2a, top5_i2a=top5_meter_i2a,
                             top1_a2i=top1_meter_a2i, top5_a2i=top5_meter_a2i,
                             ciouAvg=mean_ciou, auc=auc_val))
+
+    if args.save_test_embeddings:
+        save_embeddings(
+            args.exp_path, 'test', epoch, sample_names, image_embs, audio_embs,
+            subset=args.test_set)
 
     sys.exit(0)
 
