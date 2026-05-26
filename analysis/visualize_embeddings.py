@@ -191,7 +191,7 @@ def plot_broad_class_umap(coords, labels, title, output_path, point_size,
     colors = broad_class_colors(labels)
     class_point_size = point_size * 1.35
 
-    fig, ax = plt.subplots(figsize=(8.5, 6.5))
+    fig, ax = plt.subplots(figsize=(9.5, 6.5))
     if draw_pairs:
         for idx in range(num_samples):
             ax.plot(
@@ -259,21 +259,27 @@ def plot_broad_class_umap(coords, labels, title, output_path, point_size,
 
     class_legend = ax.legend(
         handles=class_handles,
-        title='Broad class',
-        loc='center left',
-        bbox_to_anchor=(1.02, 0.5),
+        title='Class color',
+        loc='upper left',
+        bbox_to_anchor=(1.02, 0.78),
         fontsize=8,
     )
     ax.add_artist(class_legend)
-    ax.legend(
+    modality_legend = ax.legend(
         handles=modality_handles,
-        title='Modality',
+        title='Marker',
         loc='upper left',
+        bbox_to_anchor=(1.02, 1.0),
         fontsize=8,
     )
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    fig.savefig(
+        output_path,
+        dpi=150,
+        bbox_inches='tight',
+        bbox_extra_artists=(class_legend, modality_legend),
+    )
     plt.close(fig)
     print('Saved broad-class UMAP plot to {}'.format(output_path))
 

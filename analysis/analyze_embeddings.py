@@ -10,8 +10,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 try:
+    from broad_class_labels import (
+        assign_broad_classes,
+        print_broad_class_summary,
+    )
+    from class_embedding_metrics import (
+        compute_class_metrics,
+        compute_topk_retrieval_rows,
+        plot_class_metric_outputs,
+    )
     from embedding_metrics import METRICS
 except ImportError:
+    from analysis.broad_class_labels import (
+        assign_broad_classes,
+        print_broad_class_summary,
+    )
+    from analysis.class_embedding_metrics import (
+        compute_class_metrics,
+        compute_topk_retrieval_rows,
+        plot_class_metric_outputs,
+    )
     from analysis.embedding_metrics import METRICS
 
 
@@ -32,6 +50,11 @@ def parse_args():
                         help='Embedding splits to analyze')
     parser.add_argument('--test_set', default=None, type=str,
                         help='Specific test set subdirectory to analyze')
+    parser.add_argument('--broad_classes_dir',
+                        default='analysis/broad_classes', type=str,
+                        help='Directory containing inferred broad-class JSONs')
+    parser.add_argument('--class_retrieval_top_k', default=5, type=int,
+                        help='Top-k used for class retrieval distributions')
     return parser.parse_args()
 
 
@@ -74,8 +97,9 @@ def load_embedding_file(path):
     return names, image_emb, audio_emb
 
 
-def compute_metrics(path):
-    names, image_emb, audio_emb = load_embedding_file(path)
+def compute_metrics(path, names=None, image_emb=None, audio_emb=None):
+    if names is None or image_emb is None or audio_emb is None:
+        names, image_emb, audio_emb = load_embedding_file(path)
     row = {
         'epoch': parse_epoch(path),
         'num_samples': len(names),
@@ -117,7 +141,8 @@ def iter_test_dirs(test_root, test_set):
         yield 'test', test_root
 
 
-def analyze_test(embeddings_dir, analysis_dir, test_set):
+def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
+                 class_retrieval_top_k):
     test_root = embeddings_dir / 'test'
     if not test_root.exists():
         print('No test embeddings directory found in {}'.format(test_root))
@@ -131,17 +156,74 @@ def analyze_test(embeddings_dir, analysis_dir, test_set):
             continue
 
         rows = []
+        class_rows = []
+        topk_retrieval_rows = []
         for path in files:
-            row = compute_metrics(path)
+            names, image_emb, audio_emb = load_embedding_file(path)
+            epoch = parse_epoch(path)
+
+            row = compute_metrics(path, names, image_emb, audio_emb)
             row['split'] = 'test'
             row['test_set'] = current_test_set
             rows.append(row)
+
+            try:
+                labels, diagnostics = assign_broad_classes(
+                    names, current_test_set, broad_classes_dir)
+            except FileNotFoundError as exc:
+                print(exc)
+                continue
+
+            print_broad_class_summary(current_test_set, epoch, diagnostics)
+            current_class_rows, value_sets = compute_class_metrics(
+                current_test_set,
+                epoch,
+                path,
+                image_emb,
+                audio_emb,
+                labels,
+            )
+            current_topk_retrieval_rows = compute_topk_retrieval_rows(
+                current_test_set,
+                epoch,
+                path,
+                image_emb,
+                audio_emb,
+                labels,
+                class_retrieval_top_k,
+            )
+            class_rows.extend(current_class_rows)
+            topk_retrieval_rows.extend(current_topk_retrieval_rows)
+            plot_class_metric_outputs(
+                current_class_rows,
+                value_sets,
+                current_topk_retrieval_rows,
+                current_test_set,
+                epoch,
+                analysis_dir / 'plots',
+            )
 
         rows = sorted(rows, key=lambda row: row['epoch'])
         csv_path = analysis_dir / 'test_{}_metrics.csv'.format(
             current_test_set)
         write_csv(csv_path, rows)
         print('Saved test metrics to {}'.format(csv_path))
+
+        class_csv_path = analysis_dir / 'test_{}_class_metrics.csv'.format(
+            current_test_set)
+        write_csv(class_csv_path, class_rows)
+        if class_rows:
+            print('Saved test class metrics to {}'.format(class_csv_path))
+
+        topk_retrieval_csv_path = (
+            analysis_dir / 'test_{}_class_topk_retrieval.csv'
+            .format(current_test_set)
+        )
+        write_csv(topk_retrieval_csv_path, topk_retrieval_rows)
+        if topk_retrieval_rows:
+            print(
+                'Saved test class top-k retrieval to {}'
+                .format(topk_retrieval_csv_path))
         outputs.append(rows)
 
     return outputs
@@ -187,7 +269,13 @@ def main():
     if 'val' in args.splits:
         analyze_val(embeddings_dir, analysis_dir)
     if 'test' in args.splits:
-        analyze_test(embeddings_dir, analysis_dir, args.test_set)
+        analyze_test(
+            embeddings_dir,
+            analysis_dir,
+            args.test_set,
+            args.broad_classes_dir,
+            args.class_retrieval_top_k,
+        )
 
 
 if __name__ == '__main__':
