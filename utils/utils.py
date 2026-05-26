@@ -339,13 +339,8 @@ def calc_mask_accuracy(output, target_mask, topk=(1,)):
     return res 
 
 
-def save_checkpoint(state, is_best=0, gap=1, filename='models/checkpoint.pth.tar', keep_all=True):
+def save_checkpoint(state, is_best=0, filename='models/checkpoint.pth.tar'):
     torch.save(state, filename)
-    last_epoch_path = os.path.join(os.path.dirname(filename),
-                                   'epoch%s.pth.tar' % str(state['epoch']-gap))
-    if not keep_all:
-        try: os.remove(last_epoch_path)
-        except: pass
 
     if is_best:
         past_best = glob.glob(os.path.join(os.path.dirname(filename), 'model_best_*.pth.tar'))

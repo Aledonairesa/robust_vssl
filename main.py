@@ -926,9 +926,11 @@ def main(args):
                 'optimizer': optim.state_dict(),
                 'iteration': args.iteration}
 
-            save_checkpoint(save_dict, is_best, 1, 
-                filename=os.path.join(args.model_path, 'epoch%d.pth.tar' % epoch), 
-                keep_all=True)
+            save_checkpoint(
+                save_dict,
+                is_best,
+                filename=os.path.join(
+                    args.model_path, 'checkpoint_latest.pth.tar'))
         
         else:
             state_dict = model_without_dp.state_dict()
@@ -942,9 +944,11 @@ def main(args):
                 'optimizer': optim.state_dict(),
                 'iteration': args.iteration}
 
-            save_checkpoint(save_dict, is_best=0, gap=1, 
-                filename=os.path.join(args.model_path, 'epoch%d.pth.tar' % epoch), 
-                keep_all=True)
+            save_checkpoint(
+                save_dict,
+                is_best=0,
+                filename=os.path.join(
+                    args.model_path, 'checkpoint_latest.pth.tar'))
 
         scheduler.step()
     
