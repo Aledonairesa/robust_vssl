@@ -4,13 +4,24 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 from PIL import Image
 
 try:
     from analyze_embeddings import load_embedding_file, parse_epoch
+    from broad_class_labels import (
+        UNKNOWN_LABEL,
+        assign_broad_classes,
+        print_broad_class_summary,
+    )
 except ImportError:
     from analysis.analyze_embeddings import load_embedding_file, parse_epoch
+    from analysis.broad_class_labels import (
+        UNKNOWN_LABEL,
+        assign_broad_classes,
+        print_broad_class_summary,
+    )
 
 
 def parse_args():
@@ -27,7 +38,8 @@ def parse_args():
                         help='Embedding splits to visualize')
     parser.add_argument('--visualizations', nargs='+',
                         default=['umap', 'cosine_similarity_hist'],
-                        choices=['umap', 'cosine_similarity_hist'],
+                        choices=['umap', 'class_umap',
+                                 'cosine_similarity_hist'],
                         help='Visualization types to generate')
     parser.add_argument('--test_set', default=None, type=str,
                         help='Specific test set subdirectory to visualize')
@@ -45,6 +57,9 @@ def parse_args():
                         help='Scatter point size')
     parser.add_argument('--draw_pairs', action='store_true',
                         help='Draw faint lines between matching pairs')
+    parser.add_argument('--broad_classes_dir',
+                        default='analysis/broad_classes', type=str,
+                        help='Directory containing inferred broad-class JSONs')
     parser.add_argument('--gif_duration', type=int, default=600,
                         help='Validation GIF frame duration in milliseconds')
     return parser.parse_args()
@@ -137,6 +152,130 @@ def plot_modality_umap(coords, num_samples, title, output_path, point_size,
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print('Saved UMAP plot to {}'.format(output_path))
+
+
+def broad_class_colors(labels):
+    known_labels = sorted(set(labels) - {UNKNOWN_LABEL})
+    if len(known_labels) <= 20:
+        palette = list(plt.get_cmap('tab20').colors)
+        colors = {
+            label: palette[idx % len(palette)]
+            for idx, label in enumerate(known_labels)
+        }
+    else:
+        cmap = plt.get_cmap('hsv')
+        colors = {
+            label: cmap(idx / len(known_labels))
+            for idx, label in enumerate(known_labels)
+        }
+
+    if UNKNOWN_LABEL in labels:
+        colors[UNKNOWN_LABEL] = '#9e9e9e'
+    return colors
+
+
+def ordered_broad_class_labels(labels):
+    labels = sorted(set(labels))
+    if UNKNOWN_LABEL in labels:
+        labels.remove(UNKNOWN_LABEL)
+        labels.append(UNKNOWN_LABEL)
+    return labels
+
+
+def plot_broad_class_umap(coords, labels, title, output_path, point_size,
+                          limits=None, draw_pairs=False):
+    labels = np.asarray(labels)
+    num_samples = len(labels)
+    image_coords = coords[:num_samples]
+    audio_coords = coords[num_samples:]
+    colors = broad_class_colors(labels)
+    class_point_size = point_size * 1.35
+
+    fig, ax = plt.subplots(figsize=(8.5, 6.5))
+    if draw_pairs:
+        for idx in range(num_samples):
+            ax.plot(
+                [image_coords[idx, 0], audio_coords[idx, 0]],
+                [image_coords[idx, 1], audio_coords[idx, 1]],
+                color='0.75',
+                linewidth=0.5,
+                alpha=0.3,
+                zorder=1,
+            )
+
+    for label in ordered_broad_class_labels(labels):
+        mask = labels == label
+        color = colors[label]
+        ax.scatter(
+            image_coords[mask, 0],
+            image_coords[mask, 1],
+            s=class_point_size,
+            c=[color],
+            marker='o',
+            alpha=0.82,
+            edgecolors='none',
+            zorder=2,
+        )
+        ax.scatter(
+            audio_coords[mask, 0],
+            audio_coords[mask, 1],
+            s=class_point_size,
+            c=[color],
+            marker='^',
+            alpha=0.82,
+            edgecolors='none',
+            zorder=3,
+        )
+
+    if limits is not None:
+        ax.set_xlim(limits[0], limits[1])
+        ax.set_ylim(limits[2], limits[3])
+    ax.set_title(title)
+    ax.set_xlabel('UMAP 1')
+    ax.set_ylabel('UMAP 2')
+    ax.grid(True, alpha=0.2)
+
+    class_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker='o',
+            color='none',
+            markerfacecolor=colors[label],
+            markeredgecolor='none',
+            markersize=7,
+            label=label,
+        )
+        for label in ordered_broad_class_labels(labels)
+    ]
+    modality_handles = [
+        Line2D(
+            [0], [0], marker='o', color='0.25', linestyle='none',
+            markersize=7, label='image'),
+        Line2D(
+            [0], [0], marker='^', color='0.25', linestyle='none',
+            markersize=7, label='audio'),
+    ]
+
+    class_legend = ax.legend(
+        handles=class_handles,
+        title='Broad class',
+        loc='center left',
+        bbox_to_anchor=(1.02, 0.5),
+        fontsize=8,
+    )
+    ax.add_artist(class_legend)
+    ax.legend(
+        handles=modality_handles,
+        title='Modality',
+        loc='upper left',
+        fontsize=8,
+    )
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print('Saved broad-class UMAP plot to {}'.format(output_path))
 
 
 def select_epoch_files(files, requested_epochs=None):
@@ -391,6 +530,39 @@ def visualize_test_umap(test_set, path, names, image_emb, audio_emb, plots_dir,
     )
 
 
+def visualize_test_class_umap(test_set, path, names, image_emb, audio_emb,
+                              plots_dir, args):
+    epoch = parse_epoch(path)
+    try:
+        labels, diagnostics = assign_broad_classes(
+            names,
+            test_set,
+            args.broad_classes_dir,
+        )
+    except FileNotFoundError as exc:
+        print(exc)
+        return
+
+    print_broad_class_summary(test_set, epoch, diagnostics)
+
+    embeddings = stack_modalities(image_emb, audio_emb)
+    reducer = make_umap(args)
+    coords = reducer.fit_transform(embeddings)
+
+    plot_path = plots_dir / 'class_umap' / 'test_{}_epoch_{:04d}.png'.format(
+        test_set, epoch)
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    plot_broad_class_umap(
+        coords,
+        labels,
+        'Test {} broad-class UMAP epoch {:04d}'.format(test_set, epoch),
+        plot_path,
+        args.point_size,
+        limits=axis_limits(coords),
+        draw_pairs=args.draw_pairs,
+    )
+
+
 def visualize_test_cosine_similarity_hist(test_set, path, image_emb, audio_emb,
                                           plots_dir):
     epoch = parse_epoch(path)
@@ -426,6 +598,9 @@ def visualize_test(embeddings_dir, plots_dir, args):
         names, image_emb, audio_emb = load_embedding_file(path)
         if 'umap' in args.visualizations:
             visualize_test_umap(
+                test_set, path, names, image_emb, audio_emb, plots_dir, args)
+        if 'class_umap' in args.visualizations:
+            visualize_test_class_umap(
                 test_set, path, names, image_emb, audio_emb, plots_dir, args)
         if 'cosine_similarity_hist' in args.visualizations:
             visualize_test_cosine_similarity_hist(
