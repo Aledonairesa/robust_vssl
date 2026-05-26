@@ -85,6 +85,10 @@ def get_arguments():
     parser.add_argument('--checkpoint_metric', default='auto', type=str,
                         choices=['auto', 'mean_ciou', 'loss', 'top1_i2a', 'top1_a2i'],
                         help='Metric for best checkpoint selection. auto uses mean_ciou when available, else loss.')
+    parser.add_argument('--early_stop_patience', default=0, type=int,
+                        help='Stop after this many validation checks without improvement. 0 disables early stopping.')
+    parser.add_argument('--early_stop_min_delta', default=0.0, type=float,
+                        help='Minimum checkpoint score improvement required to reset early stopping.')
     parser.add_argument('--print_freq', type=int, default=15, help=' ')
     parser.add_argument('--exp_name', type=str, default='experiment', help=' ')
     parser.add_argument('--debug', action='store_true', help='If setting debug mode, \

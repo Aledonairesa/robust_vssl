@@ -746,6 +746,10 @@ def test(test_loader, model, criterion, device, epoch, args):
 
 
 def main(args):
+    if args.early_stop_patience < 0:
+        raise ValueError('early_stop_patience must be non-negative')
+    if args.early_stop_min_delta < 0:
+        raise ValueError('early_stop_min_delta must be non-negative')
 
     # Set GPU IDs
     if args.gpus is None:
@@ -766,6 +770,7 @@ def main(args):
     args.img_path, args.model_path, args.exp_path = set_path(args)
 
     best_metric = float('-inf')
+    early_stop_wait = 0
 
     # Set random seeds for reproducibility
     torch.manual_seed(args.seed)
@@ -849,6 +854,7 @@ def main(args):
             best_metric = checkpoint.get(
                 'best_metric',
                 checkpoint.get('best_miou', float('-inf')))
+            early_stop_wait = checkpoint.get('early_stop_wait', 0)
             state_dict = checkpoint['state_dict']
 
             try: 
@@ -910,8 +916,14 @@ def main(args):
             val_metrics = validate(val_loader, model, criterion, device, epoch, args)
             checkpoint_metric, checkpoint_score = select_checkpoint_score(
                 val_metrics, args)
-            is_best = checkpoint_score > best_metric
-            best_metric = max(checkpoint_score, best_metric)
+            is_best = checkpoint_score > (
+                best_metric + args.early_stop_min_delta)
+            if is_best:
+                best_metric = checkpoint_score
+                early_stop_wait = 0
+            else:
+                early_stop_wait += 1
+
             state_dict = model_without_dp.state_dict()
             save_dict = {
                 'epoch': epoch,
@@ -919,6 +931,9 @@ def main(args):
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': checkpoint_metric,
+                'early_stop_wait': early_stop_wait,
+                'early_stop_patience': args.early_stop_patience,
+                'early_stop_min_delta': args.early_stop_min_delta,
                 'best_miou': (
                     val_metrics['mean_ciou']
                     if val_metrics['mean_ciou'] is not None
@@ -931,6 +946,25 @@ def main(args):
                 is_best,
                 filename=os.path.join(
                     args.model_path, 'checkpoint_latest.pth.tar'))
+
+            if (
+                    args.early_stop_patience > 0 and
+                    early_stop_wait >= args.early_stop_patience):
+                msg = (
+                    'Early stopping at epoch {}: no {} improvement greater '
+                    'than {:.6g} for {} validation checks. Best {} score: '
+                    '{:.6f}'
+                    .format(
+                        epoch,
+                        checkpoint_metric,
+                        args.early_stop_min_delta,
+                        early_stop_wait,
+                        checkpoint_metric,
+                        best_metric,
+                    ))
+                print(msg)
+                args.val_logger.log(msg)
+                break
         
         else:
             state_dict = model_without_dp.state_dict()
@@ -940,6 +974,9 @@ def main(args):
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': args.checkpoint_metric,
+                'early_stop_wait': early_stop_wait,
+                'early_stop_patience': args.early_stop_patience,
+                'early_stop_min_delta': args.early_stop_min_delta,
                 'best_miou': None,
                 'optimizer': optim.state_dict(),
                 'iteration': args.iteration}
