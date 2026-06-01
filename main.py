@@ -27,6 +27,7 @@ from tqdm import tqdm
 from utils.util import vis_heatmap_bbox, tensor2img
 from utils.tf_equivariance_loss import TfEquivarianceLoss
 import utils.tensorboard_utils as TB
+from utils.training_report import record_epoch
 from utils.utils import save_checkpoint, AverageMeter, calc_topk_accuracy, Logger, ProgressMeter, neq_load_customized
 
 
@@ -174,24 +175,28 @@ def select_checkpoint_score(metrics, args):
 
 
 def set_path(args):
-    if args.resume: 
-        exp_path = os.path.dirname(os.path.dirname(args.resume))
-    elif args.test: 
-        exp_path = os.path.dirname(os.path.dirname(args.test))
+    checkpoint_path = args.resume or args.test
+    if checkpoint_path:
+        exp_path = os.path.dirname(os.path.dirname(
+            os.path.abspath(checkpoint_path)))
     else:
         exp_path = os.path.join(args.output_dir, args.exp_name)
-        
-        if not os.path.exists(exp_path):
-            os.makedirs(exp_path)
 
-    img_path = os.path.join(exp_path, 'img')
-    model_path = os.path.join(exp_path, 'model')
+    args.exp_path = exp_path
+    args.images_path = os.path.join(exp_path, 'images')
+    args.checkpoints_path = os.path.join(exp_path, 'checkpoints')
+    args.logs_path = os.path.join(exp_path, 'logs')
+    args.metrics_path = os.path.join(exp_path, 'metrics')
+    args.tensorboard_path = os.path.join(exp_path, 'tensorboard')
 
-    if not os.path.exists(img_path): 
-        os.makedirs(img_path)
-    if not os.path.exists(model_path): 
-        os.makedirs(model_path)
-    return img_path, model_path, exp_path
+    for path in [
+            args.images_path,
+            args.checkpoints_path,
+            args.logs_path,
+            args.metrics_path,
+            args.tensorboard_path,
+    ]:
+        os.makedirs(path, exist_ok=True)
 
 
 def save_embeddings(exp_path, split, epoch, names, image_embs, audio_embs,
@@ -212,6 +217,40 @@ def save_embeddings(exp_path, split, epoch, names, image_embs, audio_embs,
         audio_emb=np.concatenate(audio_embs, axis=0),
     )
     print('Saved {} embeddings to {}'.format(split, embeddings_path))
+
+
+def record_epoch_report(args, epoch, optim, train_metrics, val_metrics,
+                        checkpoint_metric, checkpoint_score, best_metric,
+                        is_best, early_stop_wait):
+    row = {
+        'epoch': epoch,
+        'iteration': args.iteration,
+        'learning_rate': optim.param_groups[0]['lr'],
+        'checkpoint_metric': checkpoint_metric,
+        'checkpoint_score': checkpoint_score,
+        'best_metric_score': best_metric,
+        'is_best': int(is_best),
+        'early_stop_wait': early_stop_wait,
+        'validation_ran': int(val_metrics is not None),
+    }
+    for key, value in train_metrics.items():
+        row['train_' + key] = value
+
+    if val_metrics is not None:
+        for key in [
+                'loss',
+                'top1_i2a',
+                'top5_i2a',
+                'top1_a2i',
+                'top5_a2i',
+                'epoch_seconds',
+        ]:
+            row['val_' + key] = val_metrics[key]
+        row['val_mean_ciou'] = val_metrics['mean_ciou']
+        row['val_mean_auc'] = val_metrics['auc']
+        row['val_has_annotations'] = int(val_metrics['has_annotations'])
+
+    record_epoch(args.metrics_path, row)
 
 
 def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
@@ -318,9 +357,11 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
 
         args.iteration += 1
 
+    epoch_seconds = time.time() - tic
     print('Epoch: [{0}][{1}/{2}]\t'
-        'T-epoch:{t:.2f}\t'.format(epoch, idx, len(train_loader), t=time.time()-tic))
+        'T-epoch:{t:.2f}\t'.format(epoch, idx, len(train_loader), t=epoch_seconds))
 
+    sigmoid_metrics = {}
     if isinstance(criterion, SigmoidContrastiveLoss):
         sigmoid_param_msg = (
             'Sigmoid params: t={t:.6f} scale=exp(t)={scale:.6f} b={b:.6f}'
@@ -331,6 +372,11 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
             )
         )
         print(sigmoid_param_msg)
+        sigmoid_metrics = {
+            'sigmoid_t': criterion.t.item(),
+            'sigmoid_scale': criterion.t.exp().item(),
+            'sigmoid_b': criterion.b.item(),
+        }
 
     args.train_plotter.add_data('global/loss', losses.avg, epoch)
     args.train_plotter.add_data('global/loss_cl', losses_cl.avg, epoch)
@@ -345,12 +391,22 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     args.train_plotter.add_data('global/top1_ts_a2i', top1_meter_ts_a2i.avg, epoch)
     args.train_plotter.add_data('global/top5_ts_a2i', top5_meter_ts_a2i.avg, epoch)
 
-    args.train_logger.log('train Epoch: [{0}][{1}/{2}]\t'
-                    'T-epoch:{t:.2f}\t'.format(epoch, idx, len(train_loader), t=time.time()-tic))
-    if isinstance(criterion, SigmoidContrastiveLoss):
-        args.train_logger.log(sigmoid_param_msg)
-
-    return losses.avg, top1_meter_i2a.avg
+    return {
+        'loss': losses.avg,
+        'loss_cl': losses_cl.avg,
+        'loss_cl_ts': losses_cl_ts.avg,
+        'loss_ts': losses_ts.avg,
+        'top1_i2a': top1_meter_i2a.avg,
+        'top5_i2a': top5_meter_i2a.avg,
+        'top1_a2i': top1_meter_a2i.avg,
+        'top5_a2i': top5_meter_a2i.avg,
+        'top1_ts_i2a': top1_meter_ts_i2a.avg,
+        'top5_ts_i2a': top5_meter_ts_i2a.avg,
+        'top1_ts_a2i': top1_meter_ts_a2i.avg,
+        'top5_ts_a2i': top5_meter_ts_a2i.avg,
+        'epoch_seconds': epoch_seconds,
+        **sigmoid_metrics,
+    }
 
 
 def validate_annotated_only_legacy(val_loader, model, criterion, device, epoch, args):
@@ -363,7 +419,7 @@ def validate_annotated_only_legacy(val_loader, model, criterion, device, epoch, 
 
     val_ious_meter = []
     tic = time.time()
-    save_dir = os.path.join(args.img_path, "val_imgs", str(epoch)) 
+    save_dir = os.path.join(args.images_path, "val", str(epoch))
 
     model.eval()
 
@@ -465,13 +521,6 @@ def validate_annotated_only_legacy(val_loader, model, criterion, device, epoch, 
     args.val_plotter.add_data('global/mean_ciou', mean_ciou, epoch)
     args.val_plotter.add_data('global/mean_auc', auc_val, epoch)
     
-    args.val_logger.log('val Epoch: [{0}]\t'
-                    'Loss: {loss.avg:.4f} Acc@1_i2a: {top1_i2a.avg:.4f} Acc@5_i2a: {top5_i2a.avg:.4f} '
-                    'Acc@1_a2i: {top1_a2i.avg:.4f} Acc@5_a2i: {top5_a2i.avg:.4f} MeancIoU: {ciouAvg:.4f} AUC:{auc:.4f} \t'
-                    .format(epoch, loss=losses, top1_i2a=top1_meter_i2a, top5_i2a=top5_meter_i2a,
-                            top1_a2i=top1_meter_a2i, top5_a2i=top5_meter_a2i,
-                            ciouAvg=mean_ciou, auc=auc_val ))
-
     return losses.avg, top1_meter_i2a.avg, mean_ciou  
 
 
@@ -574,18 +623,6 @@ def validate(val_loader, model, criterion, device, epoch, args):
         args.val_plotter.add_data('global/mean_ciou', mean_ciou, epoch)
         args.val_plotter.add_data('global/mean_auc', auc_val, epoch)
 
-    log_msg = (
-        'val Epoch: [{0}]\t'
-        'Loss: {loss.avg:.4f} Acc@1_i2a: {top1_i2a.avg:.4f} '
-        'Acc@5_i2a: {top5_i2a.avg:.4f} Acc@1_a2i: {top1_a2i.avg:.4f} '
-        'Acc@5_a2i: {top5_a2i.avg:.4f}'
-        .format(epoch, loss=losses, top1_i2a=top1_meter_i2a,
-                top5_i2a=top5_meter_i2a, top1_a2i=top1_meter_a2i,
-                top5_a2i=top5_meter_a2i))
-    if has_annotations:
-        log_msg += ' MeancIoU: {0:.4f} AUC:{1:.4f}'.format(mean_ciou, auc_val)
-    args.val_logger.log(log_msg + ' \t')
-
     if args.save_val_embeddings:
         save_embeddings(
             args.exp_path, 'val', epoch, sample_names, image_embs, audio_embs)
@@ -599,6 +636,7 @@ def validate(val_loader, model, criterion, device, epoch, args):
         'mean_ciou': mean_ciou,
         'auc': auc_val,
         'has_annotations': has_annotations,
+        'epoch_seconds': time.time() - tic,
     }
 
 
@@ -614,7 +652,7 @@ def test(test_loader, model, criterion, device, epoch, args):
     val_ious_meter = []
 
     # dir for saving validationset heatmap images 
-    save_dir = os.path.join(args.img_path, "test_imgs", str(epoch), args.test_set) 
+    save_dir = os.path.join(args.images_path, "test", str(epoch), args.test_set)
     sample_names = []
     image_embs = []
     audio_embs = []
@@ -767,7 +805,7 @@ def main(args):
     else:
         device = torch.device('cpu')
 
-    args.img_path, args.model_path, args.exp_path = set_path(args)
+    set_path(args)
 
     best_metric = float('-inf')
     early_stop_wait = 0
@@ -816,9 +854,8 @@ def main(args):
             print("[Warning] no checkpoint found at '{}'".format(args.test))
             epoch = 0
 
-        logger_path = os.path.join(os.path.dirname(args.test),'../img/logs/test' )
-        if not os.path.exists(logger_path):
-            os.makedirs(logger_path)
+        logger_path = os.path.join(args.logs_path, 'test')
+        os.makedirs(logger_path, exist_ok=True)
 
         args.test_logger = Logger(path=logger_path)
         args.test_logger.log('args=\n\t\t'+'\n\t\t'.join(['%s:%s'%(str(k),str(v)) for k,v in vars(args).items()]))
@@ -882,22 +919,21 @@ def main(args):
 
     torch.backends.cudnn.benchmark = True
 
-    writer_val = SummaryWriter(logdir=os.path.join(args.img_path, 'val'))
-    writer_train = SummaryWriter(logdir=os.path.join(args.img_path, 'train'))
+    writer_val = SummaryWriter(logdir=os.path.join(args.tensorboard_path, 'val'))
+    writer_train = SummaryWriter(logdir=os.path.join(args.tensorboard_path, 'train'))
     args.val_plotter = TB.PlotterThread(writer_val)
     args.train_plotter = TB.PlotterThread(writer_train)
 
-    train_log_path = os.path.join(args.img_path, 'logs','train')
-    val_log_path   = os.path.join(args.img_path, 'logs', 'val')
-    
-    for path in [train_log_path, val_log_path]:
-        if not os.path.exists(path):
-            os.makedirs(path)
+    train_log_path = os.path.join(args.logs_path, 'train')
+    os.makedirs(train_log_path, exist_ok=True)
 
     args.train_logger = Logger(path=train_log_path)
-    args.val_logger = Logger(path=val_log_path)
 
     args.train_logger.log('args=\n\t\t'+'\n\t\t'.join(['%s:%s'%(str(k),str(v)) for k,v in vars(args).items()]))
+    if args.resume:
+        args.train_logger.log("Resumed training from '{}'".format(args.resume))
+    else:
+        args.train_logger.log('Started training from scratch')
     
     print('\n ******************Training Args*************************')
     print('args=\n\t\t'+'\n\t\t'.join(['%s:%s'%(str(k),str(v)) for k,v in vars(args).items()]))
@@ -907,11 +943,16 @@ def main(args):
         np.random.seed(epoch)
         random.seed(epoch)
 
-        train_one_epoch(train_loader, model, criterion, optim, device, epoch, args)
+        train_metrics = train_one_epoch(
+            train_loader, model, criterion, optim, device, epoch, args)
 
         if epoch >= args.eval_start:
             args.eval_freq = 1
-            
+
+        val_metrics = None
+        checkpoint_metric = args.checkpoint_metric
+        checkpoint_score = None
+        is_best = False
         if epoch % args.eval_freq == 0:
             val_metrics = validate(val_loader, model, criterion, device, epoch, args)
             checkpoint_metric, checkpoint_score = select_checkpoint_score(
@@ -945,7 +986,11 @@ def main(args):
                 save_dict,
                 is_best,
                 filename=os.path.join(
-                    args.model_path, 'checkpoint_latest.pth.tar'))
+                    args.checkpoints_path, 'checkpoint_latest.pth.tar'))
+            if is_best:
+                args.train_logger.log(
+                    'Saved new best checkpoint at epoch {}: {} score {:.6f}'
+                    .format(epoch, checkpoint_metric, checkpoint_score))
 
             if (
                     args.early_stop_patience > 0 and
@@ -963,7 +1008,11 @@ def main(args):
                         best_metric,
                     ))
                 print(msg)
-                args.val_logger.log(msg)
+                args.train_logger.log(msg)
+                record_epoch_report(
+                    args, epoch, optim, train_metrics, val_metrics,
+                    checkpoint_metric, checkpoint_score, best_metric,
+                    is_best, early_stop_wait)
                 break
         
         else:
@@ -985,11 +1034,19 @@ def main(args):
                 save_dict,
                 is_best=0,
                 filename=os.path.join(
-                    args.model_path, 'checkpoint_latest.pth.tar'))
+                    args.checkpoints_path, 'checkpoint_latest.pth.tar'))
+
+        record_epoch_report(
+            args, epoch, optim, train_metrics, val_metrics,
+            checkpoint_metric, checkpoint_score, best_metric,
+            is_best, early_stop_wait)
 
         scheduler.step()
     
-    print('Training from Epoch %d --> Epoch %d finished' % (args.start_epoch, args.epochs ))
+    finished_msg = 'Training from Epoch %d --> Epoch %d finished' % (
+        args.start_epoch, args.epochs)
+    print(finished_msg)
+    args.train_logger.log(finished_msg)
     writer_train.close()
     writer_val.close()
     
