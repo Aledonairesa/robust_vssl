@@ -199,7 +199,7 @@ def set_path(args):
         os.makedirs(path, exist_ok=True)
 
 
-def save_embeddings(exp_path, split, epoch, names, image_embs, audio_embs,
+def save_embeddings(exp_path, split, epoch, names, embedding_batches,
                     subset=None):
     path_parts = [exp_path, 'embeddings', split]
     if subset is not None:
@@ -213,8 +213,10 @@ def save_embeddings(exp_path, split, epoch, names, image_embs, audio_embs,
     np.savez_compressed(
         embeddings_path,
         names=np.asarray(names, dtype=str),
-        image_emb=np.concatenate(image_embs, axis=0),
-        audio_emb=np.concatenate(audio_embs, axis=0),
+        **{
+            key: np.concatenate(batches, axis=0)
+            for key, batches in embedding_batches.items()
+        },
     )
     print('Saved {} embeddings to {}'.format(split, embeddings_path))
 
@@ -536,8 +538,7 @@ def validate(val_loader, model, criterion, device, epoch, args):
     annotation_type = getattr(val_loader.dataset, 'annotation_type', None)
     val_ious_meter = []
     sample_names = []
-    image_embs = []
-    audio_embs = []
+    embedding_batches = {}
     tic = time.time()
 
     model.eval()
@@ -550,13 +551,12 @@ def validate(val_loader, model, criterion, device, epoch, args):
             B = image.size(0)
 
             if args.save_val_embeddings:
-                heatmap, out, Pos, Neg, out_ref, img_emb, aud_emb = model(
+                heatmap, out, Pos, Neg, out_ref, embeddings = model(
                     image.float(), spec.float(), return_embeddings=True)
                 sample_names.extend(list(name))
-                image_embs.append(
-                    img_emb.detach().cpu().numpy().astype(np.float32))
-                audio_embs.append(
-                    aud_emb.detach().cpu().numpy().astype(np.float32))
+                for key, embedding in embeddings.items():
+                    embedding_batches.setdefault(key, []).append(
+                        embedding.detach().cpu().numpy().astype(np.float32))
             else:
                 heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
             target = torch.zeros(out.shape[0]).to(device, non_blocking=True).long()
@@ -625,7 +625,7 @@ def validate(val_loader, model, criterion, device, epoch, args):
 
     if args.save_val_embeddings:
         save_embeddings(
-            args.exp_path, 'val', epoch, sample_names, image_embs, audio_embs)
+            args.exp_path, 'val', epoch, sample_names, embedding_batches)
 
     return {
         'loss': losses.avg,
@@ -654,8 +654,7 @@ def test(test_loader, model, criterion, device, epoch, args):
     # dir for saving validationset heatmap images 
     save_dir = os.path.join(args.images_path, "test", str(epoch), args.test_set)
     sample_names = []
-    image_embs = []
-    audio_embs = []
+    embedding_batches = {}
 
     model.eval()
 
@@ -667,13 +666,12 @@ def test(test_loader, model, criterion, device, epoch, args):
             B = image.size(0)
 
             if args.save_test_embeddings:
-                heatmap, out, Pos, Neg, out_ref, img_emb, aud_emb = model(
+                heatmap, out, Pos, Neg, out_ref, embeddings = model(
                     image.float(), spec.float(), return_embeddings=True)
                 sample_names.extend(list(name))
-                image_embs.append(
-                    img_emb.detach().cpu().numpy().astype(np.float32))
-                audio_embs.append(
-                    aud_emb.detach().cpu().numpy().astype(np.float32))
+                for key, embedding in embeddings.items():
+                    embedding_batches.setdefault(key, []).append(
+                        embedding.detach().cpu().numpy().astype(np.float32))
             else:
                 heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
             target = torch.zeros(out.shape[0]).to(device, non_blocking=True).long()
@@ -777,7 +775,7 @@ def test(test_loader, model, criterion, device, epoch, args):
 
     if args.save_test_embeddings:
         save_embeddings(
-            args.exp_path, 'test', epoch, sample_names, image_embs, audio_embs,
+            args.exp_path, 'test', epoch, sample_names, embedding_batches,
             subset=args.test_set)
 
     sys.exit(0)

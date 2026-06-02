@@ -189,6 +189,15 @@ class AVENet(nn.Module):
         if return_embeddings:
             img_emb = self.maxpool(img_feat).view(B, -1)
             img_emb = F.normalize(img_emb, dim=1)
-            return S_diag, logits, mask_pos, neg, S_cross_pooled, img_emb, aud_feat
+            img_emb_positive_mask_mean = (
+                img_feat * mask_pos).sum(dim=(2, 3))
+            img_emb_positive_mask_mean = F.normalize(
+                img_emb_positive_mask_mean, dim=1)
+            embeddings = {
+                'image_emb': img_emb,
+                'image_emb_positive_mask_mean': img_emb_positive_mask_mean,
+                'audio_emb': aud_feat,
+            }
+            return S_diag, logits, mask_pos, neg, S_cross_pooled, embeddings
 
         return S_diag, logits, mask_pos, neg, S_cross_pooled

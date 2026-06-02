@@ -9,14 +9,22 @@ import numpy as np
 from PIL import Image
 
 try:
-    from analyze_embeddings import load_embedding_file, parse_epoch
+    from analyze_embeddings import (
+        IMAGE_EMBEDDING_CHOICES,
+        load_embedding_file,
+        parse_epoch,
+    )
     from broad_class_labels import (
         UNKNOWN_LABEL,
         assign_broad_classes,
         print_broad_class_summary,
     )
 except ImportError:
-    from analysis.analyze_embeddings import load_embedding_file, parse_epoch
+    from analysis.analyze_embeddings import (
+        IMAGE_EMBEDDING_CHOICES,
+        load_embedding_file,
+        parse_epoch,
+    )
     from analysis.broad_class_labels import (
         UNKNOWN_LABEL,
         assign_broad_classes,
@@ -62,6 +70,9 @@ def parse_args():
                         help='Directory containing inferred broad-class JSONs')
     parser.add_argument('--gif_duration', type=int, default=600,
                         help='Validation GIF frame duration in milliseconds')
+    parser.add_argument('--image_embedding', default='positive_mask_mean',
+                        choices=IMAGE_EMBEDDING_CHOICES,
+                        help='Image embedding representation to visualize')
     return parser.parse_args()
 
 
@@ -417,7 +428,8 @@ def load_val_files(embeddings_dir, args):
 
     loaded = []
     for path in files:
-        names, image_emb, audio_emb = load_embedding_file(path)
+        names, image_emb, audio_emb = load_embedding_file(
+            path, image_embedding=args.image_embedding)
         loaded.append((path, names, image_emb, audio_emb))
     return loaded
 
@@ -601,7 +613,8 @@ def visualize_test(embeddings_dir, plots_dir, args):
             print('No test embedding files found in {}'.format(test_dir))
             continue
 
-        names, image_emb, audio_emb = load_embedding_file(path)
+        names, image_emb, audio_emb = load_embedding_file(
+            path, image_embedding=args.image_embedding)
         if 'umap' in args.visualizations:
             visualize_test_umap(
                 test_set, path, names, image_emb, audio_emb, plots_dir, args)
@@ -616,7 +629,7 @@ def visualize_test(embeddings_dir, plots_dir, args):
 def main():
     args = parse_args()
     embeddings_dir = resolve_embeddings_dir(args)
-    plots_dir = embeddings_dir / 'analysis' / 'plots'
+    plots_dir = embeddings_dir / 'analysis' / args.image_embedding / 'plots'
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     if 'val' in args.splits:

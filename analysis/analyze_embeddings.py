@@ -34,6 +34,11 @@ except ImportError:
 
 
 EPOCH_PATTERN = re.compile(r'epoch_(\d+)\.npz$')
+IMAGE_EMBEDDING_KEYS = {
+    'positive_mask_mean': 'image_emb_positive_mask_mean',
+    'maxpool': 'image_emb',
+}
+IMAGE_EMBEDDING_CHOICES = tuple(IMAGE_EMBEDDING_KEYS)
 
 
 def parse_args():
@@ -55,6 +60,9 @@ def parse_args():
                         help='Directory containing inferred broad-class JSONs')
     parser.add_argument('--class_retrieval_top_k', default=5, type=int,
                         help='Top-k used for class retrieval distributions')
+    parser.add_argument('--image_embedding', default='positive_mask_mean',
+                        choices=IMAGE_EMBEDDING_CHOICES,
+                        help='Image embedding representation to analyze')
     return parser.parse_args()
 
 
@@ -73,17 +81,33 @@ def parse_epoch(path):
     return int(match.group(1))
 
 
-def load_embedding_file(path):
-    data = np.load(path)
-    required_keys = ['names', 'image_emb', 'audio_emb']
-    missing_keys = [key for key in required_keys if key not in data.files]
-    if missing_keys:
+def load_embedding_file(path, image_embedding='positive_mask_mean'):
+    if image_embedding not in IMAGE_EMBEDDING_KEYS:
         raise ValueError(
-            '{} is missing required keys: {}'.format(path, missing_keys))
+            'Unknown image embedding representation: {}'.format(
+                image_embedding))
 
-    names = data['names']
-    image_emb = data['image_emb']
-    audio_emb = data['audio_emb']
+    image_embedding_key = IMAGE_EMBEDDING_KEYS[image_embedding]
+    with np.load(path) as data:
+        required_keys = ['names', image_embedding_key, 'audio_emb']
+        missing_keys = [
+            key for key in required_keys if key not in data.files
+        ]
+        if missing_keys:
+            message = '{} is missing required keys: {}'.format(
+                path, missing_keys)
+            if (
+                image_embedding == 'positive_mask_mean'
+                and 'image_emb' in data.files
+            ):
+                message += (
+                    '. This appears to be a legacy embedding file; use '
+                    '--image_embedding maxpool.')
+            raise ValueError(message)
+
+        names = data['names']
+        image_emb = data[image_embedding_key]
+        audio_emb = data['audio_emb']
 
     if image_emb.shape != audio_emb.shape:
         raise ValueError(
@@ -97,27 +121,33 @@ def load_embedding_file(path):
     return names, image_emb, audio_emb
 
 
-def compute_metrics(path, names=None, image_emb=None, audio_emb=None):
+def compute_metrics(path, names=None, image_emb=None, audio_emb=None,
+                    image_embedding='positive_mask_mean'):
     if names is None or image_emb is None or audio_emb is None:
-        names, image_emb, audio_emb = load_embedding_file(path)
+        names, image_emb, audio_emb = load_embedding_file(
+            path, image_embedding=image_embedding)
     row = {
         'epoch': parse_epoch(path),
         'num_samples': len(names),
         'embedding_file': str(path),
+        'image_embedding': image_embedding,
     }
     for metric_name, metric_fn in METRICS.items():
         row[metric_name] = metric_fn(image_emb, audio_emb)
     return row
 
 
-def analyze_val(embeddings_dir, analysis_dir):
+def analyze_val(embeddings_dir, analysis_dir, image_embedding):
     val_dir = embeddings_dir / 'val'
     files = sorted(val_dir.glob('epoch_*.npz'))
     if not files:
         print('No validation embedding files found in {}'.format(val_dir))
         return None
 
-    rows = sorted([compute_metrics(path) for path in files],
+    rows = sorted([
+        compute_metrics(path, image_embedding=image_embedding)
+        for path in files
+    ],
                   key=lambda row: row['epoch'])
     csv_path = analysis_dir / 'val_metrics.csv'
     write_csv(csv_path, rows)
@@ -142,7 +172,7 @@ def iter_test_dirs(test_root, test_set):
 
 
 def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
-                 class_retrieval_top_k):
+                 class_retrieval_top_k, image_embedding):
     test_root = embeddings_dir / 'test'
     if not test_root.exists():
         print('No test embeddings directory found in {}'.format(test_root))
@@ -159,10 +189,13 @@ def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
         class_rows = []
         topk_retrieval_rows = []
         for path in files:
-            names, image_emb, audio_emb = load_embedding_file(path)
+            names, image_emb, audio_emb = load_embedding_file(
+                path, image_embedding=image_embedding)
             epoch = parse_epoch(path)
 
-            row = compute_metrics(path, names, image_emb, audio_emb)
+            row = compute_metrics(
+                path, names, image_emb, audio_emb,
+                image_embedding=image_embedding)
             row['split'] = 'test'
             row['test_set'] = current_test_set
             rows.append(row)
@@ -263,11 +296,11 @@ def plot_val_metrics(rows, plots_dir):
 def main():
     args = parse_args()
     embeddings_dir = resolve_embeddings_dir(args)
-    analysis_dir = embeddings_dir / 'analysis'
+    analysis_dir = embeddings_dir / 'analysis' / args.image_embedding
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     if 'val' in args.splits:
-        analyze_val(embeddings_dir, analysis_dir)
+        analyze_val(embeddings_dir, analysis_dir, args.image_embedding)
     if 'test' in args.splits:
         analyze_test(
             embeddings_dir,
@@ -275,6 +308,7 @@ def main():
             args.test_set,
             args.broad_classes_dir,
             args.class_retrieval_top_k,
+            args.image_embedding,
         )
 
 
