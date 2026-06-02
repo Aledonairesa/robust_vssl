@@ -45,8 +45,34 @@ def _cosine_distance_matrix(left_emb, right_emb):
     return _cosine_distance_values(left_emb @ right_emb.T)
 
 
+def _normalize_rows(embeddings):
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    normalized = np.full(embeddings.shape, np.nan, dtype=float)
+    return np.divide(embeddings, norms, out=normalized, where=norms != 0)
+
+
 def _class_names(labels):
     return sorted(set(labels) - {UNKNOWN_LABEL})
+
+
+def _class_centroid_cosine_similarity_matrix(image_emb, audio_emb, labels):
+    labels = np.asarray(labels)
+    classes = _class_names(labels)
+    if not classes:
+        return classes, np.empty((0, 0), dtype=float)
+
+    image_centroids = np.stack([
+        image_emb[labels == class_name].mean(axis=0)
+        for class_name in classes
+    ])
+    audio_centroids = np.stack([
+        audio_emb[labels == class_name].mean(axis=0)
+        for class_name in classes
+    ])
+    image_centroids = _normalize_rows(image_centroids)
+    audio_centroids = _normalize_rows(audio_centroids)
+    similarities = image_centroids @ audio_centroids.T
+    return classes, np.clip(similarities, -1, 1)
 
 
 def _relative_modality_gap(paired_distances, image_distances,
@@ -450,6 +476,49 @@ def plot_class_centroid_alignment(rows, test_set, epoch, plots_dir):
     _save_figure(fig, output_path, 'Saved class centroid alignment plot to')
 
 
+def plot_class_centroid_cosine_similarity_heatmap(image_emb, audio_emb, labels,
+                                                  test_set, epoch, plots_dir):
+    classes, matrix = _class_centroid_cosine_similarity_matrix(
+        image_emb, audio_emb, labels)
+    if not classes:
+        return
+
+    fig, ax = plt.subplots(
+        figsize=(_plot_width(len(classes)), max(5.5, 0.6 * len(classes) + 2)))
+    im = ax.imshow(matrix, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)
+    ax.set_xticks(np.arange(len(classes)))
+    ax.set_xticklabels(classes, rotation=40, ha='right')
+    ax.set_yticks(np.arange(len(classes)))
+    ax.set_yticklabels(classes)
+    ax.set_xlabel('Audio centroid class')
+    ax.set_ylabel('Image centroid class')
+    ax.set_title(
+        'Test {} image/audio class centroid cosine similarity epoch {:04d}'
+        .format(test_set, epoch))
+
+    for row_idx in range(matrix.shape[0]):
+        for col_idx in range(matrix.shape[1]):
+            value = matrix[row_idx, col_idx]
+            if np.isfinite(value):
+                ax.text(
+                    col_idx,
+                    row_idx,
+                    '{:.2f}'.format(value),
+                    ha='center',
+                    va='center',
+                    fontsize=7,
+                    color='white' if abs(value) > 0.6 else 'black',
+                )
+
+    fig.colorbar(im, ax=ax, label='Cosine similarity')
+    output_path = (
+        Path(plots_dir) / 'class_centroid_cosine_similarity_heatmap' /
+        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+    )
+    _save_figure(
+        fig, output_path, 'Saved class centroid cosine-similarity heatmap to')
+
+
 def _retrieval_matrix(rows, direction, classes):
     matrix = np.full((len(classes), len(classes)), np.nan, dtype=float)
     for row in rows:
@@ -554,12 +623,14 @@ def plot_class_relative_modality_gap(rows, test_set, epoch, plots_dir):
     _save_figure(fig, output_path, 'Saved class modality-gap plot to')
 
 
-def plot_class_metric_outputs(rows, value_sets, retrieval_rows, test_set,
-                              epoch, plots_dir):
+def plot_class_metric_outputs(rows, value_sets, retrieval_rows, image_emb,
+                              audio_emb, labels, test_set, epoch, plots_dir):
     plot_class_distance_lollipop(rows, value_sets, test_set, epoch, plots_dir)
     plot_class_separability(rows, test_set, epoch, plots_dir)
     plot_class_intra_spread(rows, test_set, epoch, plots_dir)
     plot_class_centroid_alignment(rows, test_set, epoch, plots_dir)
+    plot_class_centroid_cosine_similarity_heatmap(
+        image_emb, audio_emb, labels, test_set, epoch, plots_dir)
     plot_class_topk_retrieval_distribution(
         retrieval_rows, test_set, epoch, plots_dir)
     plot_class_relative_modality_gap(rows, test_set, epoch, plots_dir)
