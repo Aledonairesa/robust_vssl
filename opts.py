@@ -2,6 +2,17 @@ from builtins import float
 import argparse
 
 
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value.lower() in ('true', '1', 'yes'):
+        return True
+    if value.lower() in ('false', '0', 'no'):
+        return False
+    raise argparse.ArgumentTypeError(
+        'expected a boolean value: true/false, 1/0, or yes/no')
+
+
 def get_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_mode', default='/', type=str, help='VGGSound | Flickr')
@@ -26,21 +37,19 @@ def get_arguments():
     
     parser.add_argument('--img_backbone_type', default='resnet18', type=str, help='resnet18 | dino_vit')
     parser.add_argument('--dino_model_name', default='facebook/dinov3-vitb16-pretrain-lvd1689m', type=str, help='DINO ViT model name from HuggingFace')
-    parser.add_argument('--freeze_dino', action='store_true', help='Whether to freeze the DINO backbone during training')
-    parser.set_defaults(freeze_dino=True)
+    parser.add_argument('--freeze_dino', type=parse_bool, default=True,
+                        help='Whether to freeze the DINO backbone during training')
     parser.add_argument('--use_vision_blocks', action='store_true', help='Whether to use additional vision transformer blocks after DINO ViT backbone')
     parser.add_argument('--aud_backbone_type', default='resnet18', type=str,
                         choices=['resnet18', 'whisper', 'beats'], help='resnet18 | whisper | beats')
     parser.add_argument('--whisper_model_name', default='openai/whisper-base', type=str,
                         help='Whisper model name from HuggingFace')
-    parser.add_argument('--freeze_whisper', action='store_true',
+    parser.add_argument('--freeze_whisper', type=parse_bool, default=True,
                         help='Whether to freeze the Whisper audio backbone during training')
-    parser.set_defaults(freeze_whisper=True)
     parser.add_argument('--beats_checkpoint', default='pretrained/beats/BEATs_iter3_plus_AS2M.pt', type=str,
                         help='Path to BEATs checkpoint')
-    parser.add_argument('--freeze_beats', action='store_true',
+    parser.add_argument('--freeze_beats', type=parse_bool, default=True,
                         help='Whether to freeze the BEATs audio backbone during training')
-    parser.set_defaults(freeze_beats=True)
     parser.add_argument('--use_audio_blocks', action='store_true',
                         help='Whether to use additional audio transformer blocks after Whisper encoder')
     parser.add_argument('--tri_map',action='store_true')
@@ -62,7 +71,6 @@ def get_arguments():
     parser.add_argument('--output_dir', default='outputs', type=str,
                         help='Root directory for experiment outputs')
     parser.add_argument('--normalisation', default='all',type=str)
-    parser.add_argument('--model_depth', default=18, type=int, help='Depth of resnet (10 | 18 | 34 | 50 | 101)')
     parser.add_argument('--gpus', default="0", type=str, help='gpus')
     parser.add_argument('--pool', default="avgpool", type=str,help= 'pooling')
     parser.add_argument('--data_aug', action='store_true')
@@ -97,8 +105,6 @@ def get_arguments():
     parser.add_argument("--temperature", default=0.07, type=float, help='Temperature for logits, 0.02, 0.05, 0.07, 0.1')
     
     parser.add_argument("--seed", default=4, type=int, help='Seed for torch and numpy initlization: 0 1 2 3 4 ')
-    
-    parser.add_argument('--finetune_last_blocks', type=int, default=2, help='finetune the last n blocks of DINO ')
     
     parser.add_argument('--obs_start_epoch', type=int, default=5, help='Epoch to start oneline batch selection')
     parser.add_argument("--obs_drop_fraction", type=float, default=0.25, help='Drop fraction of barch sample when online batch selection')
