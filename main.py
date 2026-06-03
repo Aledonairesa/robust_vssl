@@ -75,6 +75,18 @@ class SymmetricCrossEntropyLoss(nn.Module):
         )
 
 
+def align_true_pairs_loss(embeddings, image_embedding):
+    if image_embedding == 'positive_mask_mean':
+        image_emb = embeddings['image_emb_positive_mask_mean']
+    elif image_embedding == 'maxpool':
+        image_emb = embeddings['image_emb']
+    else:
+        raise ValueError('Unknown ATP image embedding: {}'.format(image_embedding))
+
+    audio_emb = embeddings['audio_emb']
+    return (image_emb - audio_emb).pow(2).sum(dim=1).mean()
+
+
 def build_criterion(args):
     if args.cl_loss == 'ce':
         return nn.CrossEntropyLoss()
@@ -262,6 +274,8 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     losses_cl = AverageMeter('Loss',':.4f')
     losses_cl_ts = AverageMeter('Loss',':.4f')
     losses_ts = AverageMeter('Loss',':.4f')
+    losses_atp = AverageMeter('Loss_ATP',':.4f')
+    losses_atp_ts = AverageMeter('Loss_ATP_ts',':.4f')
     top1_meter_i2a = AverageMeter('acc@1_i2a', ':.4f')
     top5_meter_i2a = AverageMeter('acc@5_i2a', ':.4f')
     top1_meter_a2i = AverageMeter('acc@1_a2i', ':.4f')
@@ -280,13 +294,22 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     tic = time.time()
 
     lambda_trans_equiv = args.trans_equi_weight
+    lambda_atp = args.lambda_atp
+    use_atp = lambda_atp > 0 and epoch >= args.atp_start_epoch
     
     for idx, (image, spec, audio, name) in enumerate(train_loader):
         data_time.update(time.time() - end)
         spec = spec.to(device, non_blocking=True)
         image = image.to(device, non_blocking=True)
         B = image.size(0)
-        heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
+        if use_atp:
+            heatmap, out, Pos, Neg, out_ref, embeddings = model(
+                image.float(), spec.float(), return_embeddings=True)
+            loss_atp = align_true_pairs_loss(
+                embeddings, args.atp_image_embedding)
+        else:
+            heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
+            loss_atp = torch.zeros((), device=device)
 
         if args.heatmap_no_grad:
             heatmap = heatmap.detach()
@@ -309,7 +332,15 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
 
         transformed_image = tf_equiv_loss.transform(image)
         
-        heatmap_ts, out_ts, Pos, Neg, out_ref = model(transformed_image.float(), spec.float())
+        if use_atp:
+            heatmap_ts, out_ts, Pos, Neg, out_ref, embeddings_ts = model(
+                transformed_image.float(), spec.float(), return_embeddings=True)
+            loss_atp_ts = align_true_pairs_loss(
+                embeddings_ts, args.atp_image_embedding)
+        else:
+            heatmap_ts, out_ts, Pos, Neg, out_ref = model(
+                transformed_image.float(), spec.float())
+            loss_atp_ts = torch.zeros((), device=device)
         loss_cl_ts = criterion(out_ts, target)
         logits_ts_i2a = out_ts
         logits_ts_a2i = get_logits_a2i(out_ts)
@@ -318,12 +349,19 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
 
         ts_heatmap = tf_equiv_loss.transform(heatmap)
         loss_ts = tf_equiv_loss(heatmap_ts, ts_heatmap)
-        loss = 0.5*(loss_cl + loss_cl_ts) + lambda_trans_equiv * loss_ts 
+        loss_atp_total = 0.5 * (loss_atp + loss_atp_ts)
+        loss = (
+            0.5 * (loss_cl + loss_cl_ts)
+            + lambda_trans_equiv * loss_ts
+            + lambda_atp * loss_atp_total
+        )
 
         losses.update(loss.item(), B)
         losses_cl.update(loss_cl.item(), B)
         losses_cl_ts.update(loss_cl_ts.item(), B)
         losses_ts.update(loss_ts.item(), B)
+        losses_atp.update(loss_atp.item(), B)
+        losses_atp_ts.update(loss_atp_ts.item(), B)
 
         top1_meter_i2a.update(top1_i2a.item(), B)
         top5_meter_i2a.update(top5_i2a.item(), B)
@@ -347,6 +385,8 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
             args.train_plotter.add_data('local/loss_cl', loss_cl.item(), args.iteration)
             args.train_plotter.add_data('local/loss_cl_ts', loss_cl_ts.item(), args.iteration)
             args.train_plotter.add_data('local/loss_ts', loss_ts.item(), args.iteration)
+            args.train_plotter.add_data('local/loss_atp', loss_atp.item(), args.iteration)
+            args.train_plotter.add_data('local/loss_atp_ts', loss_atp_ts.item(), args.iteration)
             args.train_plotter.add_data('local/loss', losses.local_avg, args.iteration)
             args.train_plotter.add_data('local/top1_i2a', top1_meter_i2a.local_avg, args.iteration)
             args.train_plotter.add_data('local/top5_i2a', top5_meter_i2a.local_avg, args.iteration)
@@ -384,6 +424,8 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     args.train_plotter.add_data('global/loss_cl', losses_cl.avg, epoch)
     args.train_plotter.add_data('global/loss_cl_ts', losses_cl_ts.avg, epoch)
     args.train_plotter.add_data('global/loss_ts', losses_ts.avg, epoch)
+    args.train_plotter.add_data('global/loss_atp', losses_atp.avg, epoch)
+    args.train_plotter.add_data('global/loss_atp_ts', losses_atp_ts.avg, epoch)
     args.train_plotter.add_data('global/top1_i2a', top1_meter_i2a.avg, epoch)
     args.train_plotter.add_data('global/top5_i2a', top5_meter_i2a.avg, epoch)
     args.train_plotter.add_data('global/top1_a2i', top1_meter_a2i.avg, epoch)
@@ -398,6 +440,8 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         'loss_cl': losses_cl.avg,
         'loss_cl_ts': losses_cl_ts.avg,
         'loss_ts': losses_ts.avg,
+        'loss_atp': losses_atp.avg,
+        'loss_atp_ts': losses_atp_ts.avg,
         'top1_i2a': top1_meter_i2a.avg,
         'top5_i2a': top5_meter_i2a.avg,
         'top1_a2i': top1_meter_a2i.avg,
@@ -786,6 +830,10 @@ def main(args):
         raise ValueError('early_stop_patience must be non-negative')
     if args.early_stop_min_delta < 0:
         raise ValueError('early_stop_min_delta must be non-negative')
+    if args.lambda_atp < 0:
+        raise ValueError('lambda_atp must be non-negative')
+    if args.atp_start_epoch < 1:
+        raise ValueError('atp_start_epoch must be at least 1')
 
     # Set GPU IDs
     if args.gpus is None:
