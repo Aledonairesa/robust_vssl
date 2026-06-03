@@ -118,11 +118,13 @@ def get_arguments():
     parser.add_argument('--trans_equi_weight', type=float,  default=1.0, help='Weights')
     parser.add_argument('--lambda_atp', type=float, default=0.0,
                         help='Weight for the Align True Pairs modality-gap loss. 0 disables it.')
-    parser.add_argument('--atp_image_embedding', default='positive_mask_mean',
+    parser.add_argument('--lambda_cu', type=float, default=0.0,
+                        help='Weight for the Centroid Uniformity modality-gap loss. 0 disables it.')
+    parser.add_argument('--atp_cu_image_embedding', default='positive_mask_mean',
                         choices=['positive_mask_mean', 'maxpool'],
-                        help='Image embedding used by L_ATP: localized positive-mask mean or global maxpool.')
-    parser.add_argument('--atp_start_epoch', type=int, default=1,
-                        help='Epoch from which L_ATP is enabled when lambda_atp > 0.')
+                        help='Image embedding used by L_ATP and L_CU: localized positive-mask mean or global maxpool.')
+    parser.add_argument('--atp_cu_start_epoch', type=int, default=1,
+                        help='Epoch from which L_ATP/L_CU are enabled when their weights are > 0.')
 
     parser.add_argument('--lambda_trans_ts', type=float,  default=1.0, help='Weights for the transformation equivariance loss')
     parser.add_argument('--lambda_trans_cl', type=float,  default=1.0, help='Weights for the transformation CL loss')
