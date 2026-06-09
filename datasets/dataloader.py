@@ -40,10 +40,9 @@ class GetAudioVideoDataset(Dataset):
         self.annotation_type = None
         self.sample_layout = None
 
-        if args.dataset_mode == 'VGGSound':
-            args.trainset_path = args.trainset_path
-        elif args.dataset_mode == 'Flickr':
-            args.trainset_path = args.Flickr_trainset_path
+        if args.dataset_mode != 'VGGSound':
+            raise NotImplementedError(
+                f'Dataset mode "{args.dataset_mode}" not implemented')
 
         # Debug with a small dataset
         if args.debug:
@@ -172,31 +171,6 @@ class GetAudioVideoDataset(Dataset):
                         raise ValueError('Unknown validation set: {}'.format(
                             self.args.val_set))
            
-            elif args.dataset_mode == 'Flickr':
-                if mode == 'train':
-                    if self.args.training_set_scale == 'subset_10k':
-                        train_list_file = 'train_flickr_10k.txt'
-                    else:
-                        train_list_file = 'train_flickr_144k.txt'
-                    with open('metadata/' + train_list_file,'r') as f:
-                        txt_reader = f.readlines()
-                        for item in txt_reader:
-                            data.append(item.rstrip('\n'))
-                        self.audio_path = args.trainset_path + '/mp3/'
-                        self.video_path = args.trainset_path + '/frames/'
-                        self.sample_layout = 'flickr_train'
-                
-                elif mode == 'test':
-                    with open('metadata/test_flickr_250.txt','r') as f:
-                        txt_reader = f.readlines()
-                        for item in txt_reader:
-                            data.append(item.split('.')[0])
-                        self.audio_path = args.soundnet_test_path + '/mp3/'
-                        self.video_path = args.soundnet_test_path + '/frame/'
-                        self.has_annotations = True
-                        self.annotation_type = 'soundnet'
-                        self.sample_layout = 'flat_image'
-
         self.imgSize = args.image_size 
 
         self.AmplitudeToDB = audio_T.AmplitudeToDB()
@@ -217,14 +191,11 @@ class GetAudioVideoDataset(Dataset):
    
         for item in data[:]:
             # Define audio path
-            ext = '.mp3' if self.args.dataset_mode == 'Flickr' else '.wav'
-            audio_check_path = os.path.join(self.audio_path, item + ext)
+            audio_check_path = os.path.join(self.audio_path, item + '.wav')
             
             # Define image path based on dataset and mode
             if self.sample_layout == 'vggs_train':
                 image_check_path = os.path.join(self.video_path, item, '125.jpg')
-            elif self.sample_layout == 'flickr_train':
-                image_check_path = os.path.join(self.video_path, item, '00000003.jpg')
             else:
                 image_check_path = os.path.join(self.video_path, item + '.jpg')
             
@@ -355,30 +326,17 @@ class GetAudioVideoDataset(Dataset):
     def __getitem__(self, idx):
         file = self.video_files[idx]
 
-        if self.args.dataset_mode == 'VGGSound':
-            if self.sample_layout == 'vggs_train':
-                frame = self.img_transform(self._load_frame(os.path.join( self.video_path, file , '125.jpg' ) ))
-                samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.wav'))
-                if samples.shape[0] > 1: # if stereo convert to mono
-                    samples = torch.mean(samples, dim=0, keepdim=True)
+        if self.sample_layout == 'vggs_train':
+            frame = self.img_transform(self._load_frame(os.path.join( self.video_path, file , '125.jpg' ) ))
+            samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.wav'))
+            if samples.shape[0] > 1: # if stereo convert to mono
+                samples = torch.mean(samples, dim=0, keepdim=True)
 
-            else:
-                frame = self.img_transform(self._load_frame( os.path.join(self.video_path , file + '.jpg')  ))
-                samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.wav'))
-                if samples.shape[0] > 1: # if stereo convert to mono
-                    samples = torch.mean(samples, dim=0, keepdim=True)
-        
-        ### For Flickr_SoundNet training: 
-        elif self.args.dataset_mode == 'Flickr':
-            if self.mode == 'train':
-                frame = self.img_transform(self._load_frame(os.path.join(self.video_path, file, '00000003.jpg')))
-                samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.mp3'))
-                # Only the first four seconds of the audio is used, when training
-                samples = samples[...,:samplerate * 4]
-
-            elif self.mode in ['test', 'val'] :
-                frame = self.img_transform(self._load_frame( os.path.join(self.video_path , file + '.jpg')  ))
-                samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.mp3'))
+        else:
+            frame = self.img_transform(self._load_frame( os.path.join(self.video_path , file + '.jpg')  ))
+            samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.wav'))
+            if samples.shape[0] > 1: # if stereo convert to mono
+                samples = torch.mean(samples, dim=0, keepdim=True)
 
 
         target_duration = 30 if self.args.aud_backbone_type == 'whisper' else 10

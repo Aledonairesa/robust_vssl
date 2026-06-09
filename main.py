@@ -567,7 +567,7 @@ def validate_annotated_only_legacy(val_loader, model, criterion, device, epoch, 
                         xmin, ymin, xmax, ymax = item
                         gt_map[ymin:ymax, xmin:xmax] = 1
 
-                elif (args.dataset_mode=='Flickr') or ((args.dataset_mode=='VGGSound') and (args.val_set =='SoundNet')):
+                elif (args.dataset_mode=='VGGSound') and (args.val_set =='SoundNet'):
                     gt = ET.parse(args.soundnet_test_path + '/anno/' + '%s.xml' % name[i]).getroot()
 
                     for child in gt: 
@@ -793,7 +793,7 @@ def test(test_loader, model, criterion, device, epoch, args):
                 gt_map = np.zeros([224,224])
                 bboxs = []
 
-                if (not args.dataset_mode=='Flickr') and (args.test_set == 'VGGSS'):
+                if args.test_set == 'VGGSS':
                     gt = ET.parse(args.vggss_test_path + '/anno/' + '%s.xml' % name[i]).getroot()
                     
                     for child in gt:                 
@@ -807,7 +807,7 @@ def test(test_loader, model, criterion, device, epoch, args):
                         xmin, ymin, xmax, ymax = item
                         gt_map[ymin:ymax, xmin:xmax] = 1
 
-                elif (args.dataset_mode=='Flickr') or (args.test_set =='Flickr'):
+                elif args.test_set == 'SoundNet':
                     gt = ET.parse(args.soundnet_test_path + '/anno/' + '%s.xml' % name[i]).getroot()
 
                     for child in gt: 
@@ -961,9 +961,13 @@ def main(args):
         args.test_logger.log('args=\n\t\t'+'\n\t\t'.join(['%s:%s'%(str(k),str(v)) for k,v in vars(args).items()]))
 
         if args.dataset_mode == 'VGGSound':
-            test_dataset = GetAudioVideoDataset(args, mode='test' if args.test_set == 'VGGSS' else 'val')
-        elif args.dataset_mode == 'Flickr':
-            test_dataset = GetAudioVideoDataset(args, mode='test')
+            if args.test_set == 'VGGSS':
+                test_dataset = GetAudioVideoDataset(args, mode='test')
+            elif args.test_set == 'SoundNet':
+                args.val_set = 'SoundNet'
+                test_dataset = GetAudioVideoDataset(args, mode='val')
+            else:
+                raise ValueError('Unknown test set: {}'.format(args.test_set))
 
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,\
             num_workers=args.n_threads, pin_memory=True)
@@ -971,12 +975,9 @@ def main(args):
         test(test_loader, model, criterion, device, epoch, args)
         
     train_dataset = GetAudioVideoDataset(args, mode='train')
-    if args.dataset_mode == 'VGGSound':
-        val_dataset = GetAudioVideoDataset(args, mode='val')
-    elif args.dataset_mode == 'Flickr':
-        val_dataset = GetAudioVideoDataset(args, mode='test')
-    else:
+    if args.dataset_mode != 'VGGSound':
         raise NotImplementedError(f'Dataset mode "{args.dataset_mode}" not implemented')
+    val_dataset = GetAudioVideoDataset(args, mode='val')
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, \
         shuffle=True, num_workers=args.n_threads, drop_last=True, pin_memory=True)

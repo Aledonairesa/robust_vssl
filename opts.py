@@ -15,11 +15,11 @@ def parse_bool(value):
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_mode', default='/', type=str, help='VGGSound | Flickr')
+    parser.add_argument('--dataset_mode', default='VGGSound', type=str,
+                        choices=['VGGSound'], help='VGGSound')
     parser.add_argument('--trainset_path', default='/', type=str, help='Root directory path of training data')
     parser.add_argument('--vggss_test_path', default='/',\
             type=str, help='Root directory path of data')
-    parser.add_argument('--Flickr_trainset_path', default='/', type=str, help='Root directory path of training data')
     parser.add_argument('--soundnet_test_path', default='/',\
             type=str, help='soundset validation set directory' )
    
