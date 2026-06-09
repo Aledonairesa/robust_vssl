@@ -23,9 +23,8 @@ def get_arguments():
    
     parser.add_argument('--training_set_scale', default='fullset', type=str, help="fullset | subset_144k | subset_143k | subset_10k | subset_1k , for VGGSound")
     parser.add_argument('--testing_set_scale', default='fullset', type=str, help="fullset | subset_250 , for VGGSound")
-    parser.add_argument('--val_set', default='VGGSS', type=str,
-                        choices=['VGGS', 'VGGSS'],
-                        help='validation set: VGGS | VGGSS')
+    parser.add_argument('--val_set', default='VGGS', type=str,
+                        choices=['VGGS'], help='validation set: VGGS')
     parser.add_argument('--val_set_scale', default='subset_1k', type=str, help='validation set scale: subset_1k | subset_250')
     parser.add_argument('--test_set', default="VGGSS", type=str,
                         choices=['VGGSS'], help='Testing set: VGGSS')

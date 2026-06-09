@@ -67,15 +67,13 @@ class GetAudioVideoDataset(Dataset):
                     self.sample_layout = 'flat_image'
 
             elif mode=='val':
-                with open('metadata/debug_data/test_vggss_debug_50.txt','r') as f:
+                with open('metadata/val_vggs_250.txt','r') as f:
                     txt_reader = f.readlines()
                     for item in txt_reader:
-                        data.append(item.split('.')[0])
-                    self.audio_path = args.vggss_test_path + '/audio/'
-                    self.video_path = args.vggss_test_path + '/frame/'
-                    self.has_annotations = True
-                    self.annotation_type = 'vggss'
-                    self.sample_layout = 'flat_image'
+                        data.append(item.rstrip('\n'))
+                    self.audio_path = args.trainset_path + '/total_video_3s_audio/'
+                    self.video_path = args.trainset_path + '/total_video_frames/'
+                    self.sample_layout = 'vggs_train'
 
         else:
             if args.dataset_mode == 'VGGSound':
@@ -137,22 +135,6 @@ class GetAudioVideoDataset(Dataset):
                             self.audio_path = args.trainset_path + '/total_video_3s_audio/'
                             self.video_path = args.trainset_path + '/total_video_frames/'
                             self.sample_layout = 'vggs_train'
-
-                    elif self.args.val_set == 'VGGSS':
-                        if self.args.val_set_scale == 'subset_250':
-                            val_list_file = 'test_vggss_250.txt'
-                        else:
-                            val_list_file = 'test_vggss_4911.txt'
-
-                        with open('metadata/' + val_list_file, 'r') as f:
-                            txt_reader = f.readlines()
-                            for item in txt_reader:
-                                data.append(item.split('.')[0])
-                            self.audio_path = args.vggss_test_path + '/audio/'
-                            self.video_path = args.vggss_test_path + '/frame/'
-                            self.has_annotations = True
-                            self.annotation_type = 'vggss'
-                            self.sample_layout = 'flat_image'
 
                     else:
                         raise ValueError('Unknown validation set: {}'.format(
