@@ -732,9 +732,6 @@ def main(args):
         os.environ["CUDA_VISIBLE_DEVICES"]=str(args.gpus)
         args.gpus = list(range(torch.cuda.device_count()))
 
-    if args.debug:
-        args.n_threads=0
-
     # Set device
     if torch.cuda.is_available() and len(args.gpus) > 0:
         device = torch.device('cuda:1') if len(args.gpus) > 1 else torch.device('cuda:0')
