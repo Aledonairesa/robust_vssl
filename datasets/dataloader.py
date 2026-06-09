@@ -40,18 +40,18 @@ class GetAudioVideoDataset(Dataset):
         self.sample_layout = None
 
         if mode=='train':
-            if self.args.training_set_scale == 'subset_144k':
+            if self.args.train_set_scale == 'subset_144k':
                 if self.args.ret_seen_144k:
                     train_list_file = 'train_seen_144k_list.txt'
                 else:
                     train_list_file = 'train_vggs_144k.txt'
-            elif self.args.training_set_scale == 'subset_143k':
+            elif self.args.train_set_scale == 'subset_143k':
                 train_list_file = 'train_vggs_143k.txt'
-            elif self.args.training_set_scale == 'subset_10k':
+            elif self.args.train_set_scale == 'subset_10k':
                 train_list_file = 'train_vggs_10k.txt'
-            elif self.args.training_set_scale == 'subset_1k':
+            elif self.args.train_set_scale == 'subset_1k':
                 train_list_file = 'train_vggs_1k.txt'
-            elif self.args.training_set_scale == 'subset_100':
+            elif self.args.train_set_scale == 'subset_100':
                 train_list_file = 'train_vggs_100.txt'
             else:
                 train_list_file = 'train_vggs_190228.txt' 
@@ -65,9 +65,9 @@ class GetAudioVideoDataset(Dataset):
                 self.sample_layout = 'vggs_train'
 
         elif mode=='test':
-            if self.args.testing_set_scale == 'subset_250':
+            if self.args.test_set_scale == 'subset_250':
                 test_list_file = 'test_vggss_250.txt'
-            elif self.args.testing_set_scale == 'subset_50':
+            elif self.args.test_set_scale == 'subset_50':
                 test_list_file = 'test_vggss_50.txt'
             else:
                 test_list_file = 'test_vggss_4911.txt'
