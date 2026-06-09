@@ -155,37 +155,9 @@ def build_vggss_gt_map(args, name):
     return gt_map, bboxs
 
 
-def build_soundnet_gt_map(args, name):
-    gt_map = np.zeros([224, 224])
-    bboxs = []
-    gt = ET.parse(args.soundnet_test_path + '/anno/' + '%s.xml' % name).getroot()
-
-    for child in gt:
-        for childs in child:
-            bbox = []
-            if childs.tag == 'bbox':
-                for index, ch in enumerate(childs):
-                    if index == 0:
-                        continue
-                    bbox.append(int(224 * int(ch.text) / 256))
-            if bbox:
-                bboxs.append(bbox)
-
-    for item_ in bboxs:
-        temp = np.zeros([224, 224])
-        temp[item_[1]:item_[3], item_[0]:item_[2]] = 1
-        gt_map += temp
-    gt_map /= 2
-    gt_map[gt_map > 1] = 1
-
-    return gt_map, bboxs
-
-
 def build_gt_map(args, annotation_type, name):
     if annotation_type == 'vggss':
         return build_vggss_gt_map(args, name)
-    if annotation_type == 'soundnet':
-        return build_soundnet_gt_map(args, name)
     raise ValueError('Unknown annotation type: {}'.format(annotation_type))
 
 
@@ -567,27 +539,6 @@ def validate_annotated_only_legacy(val_loader, model, criterion, device, epoch, 
                         xmin, ymin, xmax, ymax = item
                         gt_map[ymin:ymax, xmin:xmax] = 1
 
-                elif (args.dataset_mode=='VGGSound') and (args.val_set =='SoundNet'):
-                    gt = ET.parse(args.soundnet_test_path + '/anno/' + '%s.xml' % name[i]).getroot()
-
-                    for child in gt: 
-                        for childs in child:
-                            bbox = []
-                            if childs.tag == 'bbox':
-                                for index,ch in enumerate(childs):
-                                    if index == 0:
-                                        continue
-                                    bbox.append(int(224 * int(ch.text)/256))
-                            bboxs.append(bbox)  
-
-                    for item_ in bboxs:
-                        temp = np.zeros([224,224])
-                        (xmin,ymin,xmax,ymax) = item_[0],item_[1],item_[2],item_[3]
-                        temp[item_[1]:item_[3],item_[0]:item_[2]] = 1
-                        gt_map += temp
-                    gt_map /= 2         
-                    gt_map[gt_map>1] = 1
-                    
                 else:
                     print('Validation Not Assigned !')
 
@@ -807,27 +758,6 @@ def test(test_loader, model, criterion, device, epoch, args):
                         xmin, ymin, xmax, ymax = item
                         gt_map[ymin:ymax, xmin:xmax] = 1
 
-                elif args.test_set == 'SoundNet':
-                    gt = ET.parse(args.soundnet_test_path + '/anno/' + '%s.xml' % name[i]).getroot()
-
-                    for child in gt: 
-                        for childs in child:
-                            bbox = []
-                            if childs.tag == 'bbox':
-                                for index,ch in enumerate(childs):
-                                    if index == 0:
-                                        continue
-                                    bbox.append(int(224 * int(ch.text)/256))
-                            bboxs.append(bbox)  
-
-                    for item_ in bboxs:
-                        temp = np.zeros([224,224])
-                        (xmin,ymin,xmax,ymax) = item_[0],item_[1],item_[2],item_[3]
-                        temp[item_[1]:item_[3],item_[0]:item_[2]] = 1
-                        gt_map += temp
-                    gt_map /= 2         
-                    gt_map[gt_map>1] = 1
-
                 else:
                     print('Testing dataset Not Assigned !')
 
@@ -963,9 +893,6 @@ def main(args):
         if args.dataset_mode == 'VGGSound':
             if args.test_set == 'VGGSS':
                 test_dataset = GetAudioVideoDataset(args, mode='test')
-            elif args.test_set == 'SoundNet':
-                args.val_set = 'SoundNet'
-                test_dataset = GetAudioVideoDataset(args, mode='val')
             else:
                 raise ValueError('Unknown test set: {}'.format(args.test_set))
 

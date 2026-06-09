@@ -1,6 +1,5 @@
 import os
 import torch
-import csv
 import torch
 from torch import nn
 from torch.utils.data import Dataset
@@ -68,15 +67,14 @@ class GetAudioVideoDataset(Dataset):
                     self.sample_layout = 'flat_image'
 
             elif mode=='val':
-                with open('metadata/test_flick.csv') as f:
-                    csv_reader = csv.reader(f)
-                    for item in csv_reader:
-                        data.append(item[0])
-                    
-                    self.audio_path = args.soundnet_test_path + '/audio/'
-                    self.video_path = args.soundnet_test_path + '/frames/'
+                with open('metadata/debug_data/test_vggss_debug_50.txt','r') as f:
+                    txt_reader = f.readlines()
+                    for item in txt_reader:
+                        data.append(item.split('.')[0])
+                    self.audio_path = args.vggss_test_path + '/audio/'
+                    self.video_path = args.vggss_test_path + '/frame/'
                     self.has_annotations = True
-                    self.annotation_type = 'soundnet'
+                    self.annotation_type = 'vggss'
                     self.sample_layout = 'flat_image'
 
         else:
@@ -156,17 +154,6 @@ class GetAudioVideoDataset(Dataset):
                             self.annotation_type = 'vggss'
                             self.sample_layout = 'flat_image'
 
-                    elif self.args.val_set == 'SoundNet':
-                        with open('metadata/test_flick.csv') as f:
-                            csv_reader = csv.reader(f)
-                            for item in csv_reader:
-                                data.append(item[0])
-                        
-                            self.audio_path = args.soundnet_test_path + '/audio/'
-                            self.video_path = args.soundnet_test_path + '/frame/'
-                            self.has_annotations = True
-                            self.annotation_type = 'soundnet'
-                            self.sample_layout = 'flat_image'
                     else:
                         raise ValueError('Unknown validation set: {}'.format(
                             self.args.val_set))
