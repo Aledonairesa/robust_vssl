@@ -39,10 +39,6 @@ class GetAudioVideoDataset(Dataset):
         self.annotation_type = None
         self.sample_layout = None
 
-        if args.dataset_mode != 'VGGSound':
-            raise NotImplementedError(
-                f'Dataset mode "{args.dataset_mode}" not implemented')
-
         # Debug with a small dataset
         if args.debug:
             
@@ -76,23 +72,58 @@ class GetAudioVideoDataset(Dataset):
                     self.sample_layout = 'vggs_train'
 
         else:
-            if args.dataset_mode == 'VGGSound':
-                if mode=='train':
-                    if self.args.training_set_scale == 'subset_144k':
-                        if self.args.ret_seen_144k:
-                            train_list_file = 'train_seen_144k_list.txt'
-                        else:
-                            train_list_file = 'train_vggs_144k.txt'
-                    elif self.args.training_set_scale == 'subset_143k':
-                        train_list_file = 'train_vggs_143k.txt'
-                    elif self.args.training_set_scale == 'subset_10k':
-                        train_list_file = 'train_vggs_10k.txt'
-                    elif self.args.training_set_scale == 'subset_1k':
-                        train_list_file = 'train_vggs_1k.txt'
+            if mode=='train':
+                if self.args.training_set_scale == 'subset_144k':
+                    if self.args.ret_seen_144k:
+                        train_list_file = 'train_seen_144k_list.txt'
                     else:
-                        train_list_file = 'train_vggs_190228.txt' 
+                        train_list_file = 'train_vggs_144k.txt'
+                elif self.args.training_set_scale == 'subset_143k':
+                    train_list_file = 'train_vggs_143k.txt'
+                elif self.args.training_set_scale == 'subset_10k':
+                    train_list_file = 'train_vggs_10k.txt'
+                elif self.args.training_set_scale == 'subset_1k':
+                    train_list_file = 'train_vggs_1k.txt'
+                else:
+                    train_list_file = 'train_vggs_190228.txt' 
 
-                    with open('metadata/' + train_list_file,'r') as f:
+                with open('metadata/' + train_list_file,'r') as f:
+                    txt_reader = f.readlines()
+                    for item in txt_reader:
+                        data.append(item.rstrip('\n'))
+                    self.audio_path = args.trainset_path + '/total_video_3s_audio/'
+                    self.video_path = args.trainset_path + '/total_video_frames/'
+                    self.sample_layout = 'vggs_train'
+
+            elif mode=='test':
+                if self.args.testing_set_scale == 'subset_250':
+                    test_list_file = 'test_vggss_250.txt'
+                else:
+                    test_list_file = 'test_vggss_4911.txt'
+                
+                with open('metadata/' + test_list_file, 'r') as f:
+                    txt_reader = f.readlines()
+                    for item in txt_reader[:]:
+                        data.append(item.split('.')[0])
+                    self.audio_path = args.vggss_test_path + '/audio/'
+                    self.video_path = args.vggss_test_path + '/frame/'
+                    self.has_annotations = True
+                    self.annotation_type = 'vggss'
+                    self.sample_layout = 'flat_image'
+                
+            elif mode=='val':
+                if self.args.val_set == 'VGGS':
+                    if self.args.val_set_scale == 'subset_250':
+                        val_list_file = 'val_vggs_250.txt'
+                    elif self.args.val_set_scale == 'subset_1k':
+                        val_list_file = 'val_vggs_1k.txt'
+                    else:
+                        raise ValueError(
+                            'VGGS validation supports val_set_scale '
+                            'subset_250 or subset_1k, got {}'.format(
+                                self.args.val_set_scale))
+
+                    with open('metadata/' + val_list_file, 'r') as f:
                         txt_reader = f.readlines()
                         for item in txt_reader:
                             data.append(item.rstrip('\n'))
@@ -100,45 +131,9 @@ class GetAudioVideoDataset(Dataset):
                         self.video_path = args.trainset_path + '/total_video_frames/'
                         self.sample_layout = 'vggs_train'
 
-                elif mode=='test':
-                    if self.args.testing_set_scale == 'subset_250':
-                        test_list_file = 'test_vggss_250.txt'
-                    else:
-                        test_list_file = 'test_vggss_4911.txt'
-                    
-                    with open('metadata/' + test_list_file, 'r') as f:
-                        txt_reader = f.readlines()
-                        for item in txt_reader[:]:
-                            data.append(item.split('.')[0])
-                        self.audio_path = args.vggss_test_path + '/audio/'
-                        self.video_path = args.vggss_test_path + '/frame/'
-                        self.has_annotations = True
-                        self.annotation_type = 'vggss'
-                        self.sample_layout = 'flat_image'
-                
-                elif mode=='val':
-                    if self.args.val_set == 'VGGS':
-                        if self.args.val_set_scale == 'subset_250':
-                            val_list_file = 'val_vggs_250.txt'
-                        elif self.args.val_set_scale == 'subset_1k':
-                            val_list_file = 'val_vggs_1k.txt'
-                        else:
-                            raise ValueError(
-                                'VGGS validation supports val_set_scale '
-                                'subset_250 or subset_1k, got {}'.format(
-                                    self.args.val_set_scale))
-
-                        with open('metadata/' + val_list_file, 'r') as f:
-                            txt_reader = f.readlines()
-                            for item in txt_reader:
-                                data.append(item.rstrip('\n'))
-                            self.audio_path = args.trainset_path + '/total_video_3s_audio/'
-                            self.video_path = args.trainset_path + '/total_video_frames/'
-                            self.sample_layout = 'vggs_train'
-
-                    else:
-                        raise ValueError('Unknown validation set: {}'.format(
-                            self.args.val_set))
+                else:
+                    raise ValueError('Unknown validation set: {}'.format(
+                        self.args.val_set))
            
         self.imgSize = args.image_size 
 

@@ -796,11 +796,10 @@ def main(args):
         args.test_logger = Logger(path=logger_path)
         args.test_logger.log('args=\n\t\t'+'\n\t\t'.join(['%s:%s'%(str(k),str(v)) for k,v in vars(args).items()]))
 
-        if args.dataset_mode == 'VGGSound':
-            if args.test_set == 'VGGSS':
-                test_dataset = GetAudioVideoDataset(args, mode='test')
-            else:
-                raise ValueError('Unknown test set: {}'.format(args.test_set))
+        if args.test_set == 'VGGSS':
+            test_dataset = GetAudioVideoDataset(args, mode='test')
+        else:
+            raise ValueError('Unknown test set: {}'.format(args.test_set))
 
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,\
             num_workers=args.n_threads, pin_memory=True)
@@ -808,8 +807,6 @@ def main(args):
         test(test_loader, model, criterion, device, epoch, args)
         
     train_dataset = GetAudioVideoDataset(args, mode='train')
-    if args.dataset_mode != 'VGGSound':
-        raise NotImplementedError(f'Dataset mode "{args.dataset_mode}" not implemented')
     val_dataset = GetAudioVideoDataset(args, mode='val')
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, \
@@ -849,7 +846,7 @@ def main(args):
             print("[Warning] no checkpoint found at '{}', use random init".format(args.resume))
 
     else:
-        print('Train the model from scratch on {0}!'.format(args.dataset_mode))
+        print('Train the model from scratch on VGGS!')
 
     torch.backends.cudnn.benchmark = True
 

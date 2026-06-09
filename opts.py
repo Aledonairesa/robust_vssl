@@ -15,8 +15,6 @@ def parse_bool(value):
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_mode', default='VGGSound', type=str,
-                        choices=['VGGSound'], help='VGGSound')
     parser.add_argument('--trainset_path', default='/', type=str, help='Root directory path of training data')
     parser.add_argument('--vggss_test_path', default='/',\
             type=str, help='Root directory path of data')
