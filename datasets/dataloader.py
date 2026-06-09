@@ -83,28 +83,23 @@ class GetAudioVideoDataset(Dataset):
                 self.sample_layout = 'flat_image'
                 
         elif mode=='val':
-            if self.args.val_set == 'VGGS':
-                if self.args.val_set_scale == 'subset_250':
-                    val_list_file = 'val_vggs_250.txt'
-                elif self.args.val_set_scale == 'subset_1k':
-                    val_list_file = 'val_vggs_1k.txt'
-                else:
-                    raise ValueError(
-                        'VGGS validation supports val_set_scale '
-                        'subset_250 or subset_1k, got {}'.format(
-                            self.args.val_set_scale))
-
-                with open('metadata/' + val_list_file, 'r') as f:
-                    txt_reader = f.readlines()
-                    for item in txt_reader:
-                        data.append(item.rstrip('\n'))
-                    self.audio_path = args.trainset_path + '/total_video_3s_audio/'
-                    self.video_path = args.trainset_path + '/total_video_frames/'
-                    self.sample_layout = 'vggs_train'
-
+            if self.args.val_set_scale == 'subset_250':
+                val_list_file = 'val_vggs_250.txt'
+            elif self.args.val_set_scale == 'subset_1k':
+                val_list_file = 'val_vggs_1k.txt'
             else:
-                raise ValueError('Unknown validation set: {}'.format(
-                    self.args.val_set))
+                raise ValueError(
+                    'VGGS validation supports val_set_scale '
+                    'subset_250 or subset_1k, got {}'.format(
+                        self.args.val_set_scale))
+
+            with open('metadata/' + val_list_file, 'r') as f:
+                txt_reader = f.readlines()
+                for item in txt_reader:
+                    data.append(item.rstrip('\n'))
+                self.audio_path = args.trainset_path + '/total_video_3s_audio/'
+                self.video_path = args.trainset_path + '/total_video_frames/'
+                self.sample_layout = 'vggs_train'
            
         self.imgSize = args.image_size 
 
