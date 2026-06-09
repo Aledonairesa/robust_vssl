@@ -23,16 +23,12 @@ def get_arguments():
     parser.add_argument('--soundnet_test_path', default='/',\
             type=str, help='soundset validation set directory' )
    
-    parser.add_argument('--trainset', default='VGGSS', type=str, help="Training dataset")
     parser.add_argument('--training_set_scale', default='fullset', type=str, help="fullset | subset_144k | subset_143k | subset_10k | subset_1k , for VGGSound")
     parser.add_argument('--testing_set_scale', default='fullset', type=str, help="fullset | subset_250 , for VGGSound")
     parser.add_argument('--val_set', default='VGGSS', type=str, help='validation set: VGGS | VGGSS | SoundNet')
-    parser.add_argument('--val_set_scale', default='subset_1k', type=str, help='validation set scale: fullset | subset_1k | subset_250')
+    parser.add_argument('--val_set_scale', default='subset_1k', type=str, help='validation set scale: subset_1k | subset_250')
     parser.add_argument('--test_set', default="VGGSS", type=str, help='Testing set: VGGSS| SoundNet ')
 
-    parser.add_argument('--csv_path',default='',type=str,help='train files')
-    parser.add_argument('--train_csv',default='train.csv',type=str,help='train files')
-    parser.add_argument('--test_csv', default='test.csv', type=str, help='test files')
     parser.add_argument('--model_name', default='vgg', type=str, help='test files')
     
     parser.add_argument('--img_backbone_type', default='resnet18', type=str, help='resnet18 | dino_vit')
@@ -153,8 +149,4 @@ def get_arguments():
 
     parser.add_argument('--ret_seen_144k', action='store_true', default=False)
 
-    ## openset
-    parser.add_argument('--openset_70k', action='store_true', default=False)
-
-    
     return parser.parse_args()
