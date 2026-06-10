@@ -19,7 +19,6 @@ from models.model import AVENet
 from datasets import GetAudioVideoDataset
 from opts import get_arguments
 from utils.utils import AverageMeter
-import xml.etree.ElementTree as ET
 from utils.eval_ import Evaluator
 from sklearn.metrics import auc
 from tqdm import tqdm
@@ -134,50 +133,6 @@ def cal_auc(iou):
     auc_ = auc(x, results)
 
     return auc_
-
-
-def build_vggss_gt_map(args, name):
-    gt_map = np.zeros([224, 224])
-    bboxs = []
-    gt = ET.parse(args.vggss_test_path + '/anno/' + '%s.xml' % name).getroot()
-
-    for child in gt:
-        if child.tag == 'bbox':
-            for childs in child:
-                bbox_normalized = [float(x.text) for x in childs]
-                bbox = [int(x * 224) for x in bbox_normalized]
-                bboxs.append(bbox)
-
-    for item in bboxs:
-        xmin, ymin, xmax, ymax = item
-        gt_map[ymin:ymax, xmin:xmax] = 1
-
-    return gt_map, bboxs
-
-
-def build_is3plus_mask_gt_map(args, name):
-    mask_path = os.path.join(
-        args.is3plus_test_path, 'gt_segmentation', name + '.jpg')
-    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        raise FileNotFoundError(
-            'IS3plus segmentation mask not found: {}'.format(mask_path))
-
-    if mask.shape != (224, 224):
-        mask = cv2.resize(
-            mask, dsize=(224, 224), interpolation=cv2.INTER_NEAREST)
-
-    gt_map = np.zeros([224, 224])
-    gt_map[mask > 127] = 1
-    return gt_map, []
-
-
-def build_gt_map(args, annotation_type, name):
-    if annotation_type == 'vggss':
-        return build_vggss_gt_map(args, name)
-    if annotation_type == 'is3plus_mask':
-        return build_is3plus_mask_gt_map(args, name)
-    raise ValueError('Unknown annotation type: {}'.format(annotation_type))
 
 
 def select_checkpoint_score(metrics, args):
@@ -507,7 +462,6 @@ def validate(val_loader, model, criterion, device, epoch, args):
     top5_meter_a2i = AverageMeter('acc@5_a2i', ':.4f')
 
     has_annotations = getattr(val_loader.dataset, 'has_annotations', False)
-    annotation_type = getattr(val_loader.dataset, 'annotation_type', None)
     val_ious_meter = []
     sample_names = []
     embedding_batches = {}
@@ -555,7 +509,7 @@ def validate(val_loader, model, criterion, device, epoch, args):
                         dsize=(224, 224),
                         interpolation=cv2.INTER_LINEAR)
                     heatmap_now = normalize_img(-heatmap_now)
-                    gt_map, bboxs = build_gt_map(args, annotation_type, name[i])
+                    gt_map, bboxs = val_loader.dataset.get_gt_map(name[i])
 
                     pred = heatmap_now
                     pred = 1 - pred
@@ -623,7 +577,8 @@ def test(test_loader, model, criterion, device, epoch, args):
     # Compute ciou
     val_ious_meter = []
     has_annotations = getattr(test_loader.dataset, 'has_annotations', False)
-    annotation_type = getattr(test_loader.dataset, 'annotation_type', None)
+    annotation_visualization = getattr(
+        test_loader.dataset, 'annotation_visualization', None)
 
     # dir for saving validationset heatmap images 
     save_dir = os.path.join(args.images_path, "test", str(epoch), args.test_set)
@@ -669,7 +624,7 @@ def test(test_loader, model, criterion, device, epoch, args):
 
                     heatmap_now = cv2.resize(heatmap_arr[i,0], dsize=(224, 224), interpolation=cv2.INTER_LINEAR)
                     heatmap_now = normalize_img(-heatmap_now)
-                    gt_map, bboxs = build_gt_map(args, annotation_type, name[i])
+                    gt_map, bboxs = test_loader.dataset.get_gt_map(name[i])
 
                     pred =  heatmap_now
                     pred = 1 - pred
@@ -689,7 +644,9 @@ def test(test_loader, model, criterion, device, epoch, args):
                     name_vis = name[i]
                     bbox_vis = bboxs
                     contour_mask = (
-                        gt_map if annotation_type == 'is3plus_mask' else None)
+                        gt_map
+                        if annotation_visualization == 'mask'
+                        else None)
 
                     heatmap_img = vis_heatmap_bbox(heatmap_vis, img_vis, name_vis,\
                             bbox=bbox_vis, ciou=ciou, save_dir=save_dir,

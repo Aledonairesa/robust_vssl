@@ -1,7 +1,10 @@
 import json
 import os
+import csv
 import torch
 import torch
+import numpy as np
+import xml.etree.ElementTree as ET
 from torch import nn
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -37,8 +40,11 @@ class GetAudioVideoDataset(Dataset):
         data = []
         self.args = args
         self.has_annotations = False
-        self.annotation_type = None
+        self._annotation_format = None
+        self.annotation_visualization = None
         self.sample_layout = None
+        self.annotation_paths = {}
+        self.annotation_thresholds = {}
 
         if mode=='train':
             if self.args.train_set_scale == 'subset_144k':
@@ -81,7 +87,8 @@ class GetAudioVideoDataset(Dataset):
                     self.audio_path = args.vggss_test_path + '/audio/'
                     self.video_path = args.vggss_test_path + '/frame/'
                     self.has_annotations = True
-                    self.annotation_type = 'vggss'
+                    self._annotation_format = 'bbox_xml'
+                    self.annotation_visualization = 'boxes'
                     self.sample_layout = 'flat_image'
             elif self.args.test_set == 'IS3plus':
                 is3plus_root = args.is3plus_test_path
@@ -106,7 +113,14 @@ class GetAudioVideoDataset(Dataset):
                     })
 
                 self.has_annotations = True
-                self.annotation_type = 'is3plus_mask'
+                self._annotation_format = 'binary_mask'
+                self.annotation_visualization = 'mask'
+                self.sample_layout = 'explicit_paths'
+            elif self.args.test_set == 'AVSBench':
+                data = self._load_avsbench_test_samples(args.avsbench_test_path)
+                self.has_annotations = True
+                self._annotation_format = 'binary_mask'
+                self.annotation_visualization = 'mask'
                 self.sample_layout = 'explicit_paths'
             else:
                 raise ValueError('Unknown test set: {}'.format(
@@ -164,6 +178,9 @@ class GetAudioVideoDataset(Dataset):
                 else:
                     image_check_path = os.path.join(self.video_path, item + '.jpg')
                 annotation_check_path = None
+                if self._annotation_format == 'bbox_xml':
+                    annotation_check_path = os.path.join(
+                        self.args.vggss_test_path, 'anno', item + '.xml')
 
             files_exist = (
                 os.path.exists(audio_check_path)
@@ -177,16 +194,93 @@ class GetAudioVideoDataset(Dataset):
             # Ensure required files exist before appending
             if files_exist:
                 self.video_files.append(item)
+                if annotation_check_path:
+                    name = (
+                        item['name']
+                        if self.sample_layout == 'explicit_paths'
+                        else item)
+                    self.annotation_paths[name] = annotation_check_path
+                    if self._annotation_format == 'binary_mask':
+                        self.annotation_thresholds[name] = item.get(
+                            'mask_threshold', 127)
 
         print("{0} requested dataset size: {1}".format(self.mode.upper() , len(data)))
         print("{0} actual available size: {1}".format(self.mode.upper() , len(self.video_files)))
-        
+
         self.count = 0
 
     def _resolve_dataset_path(self, root, relative_path):
         if relative_path.startswith('./') or relative_path.startswith('.\\'):
             relative_path = relative_path[2:]
         return os.path.normpath(os.path.join(root, relative_path))
+
+    def _load_avsbench_test_samples(self, avsbench_root):
+        metadata_file = os.path.join(avsbench_root, 'metadata.csv')
+        v1s_root = os.path.join(avsbench_root, 'v1s')
+        samples = []
+
+        with open(metadata_file, 'r', encoding='utf-8', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row['split'] != 'test':
+                    continue
+
+                uid = row['uid']
+                sample_root = os.path.join(v1s_root, uid)
+                audio_path = os.path.join(sample_root, 'audio.wav')
+
+                for frame_idx in range(5):
+                    frame_name = '{}.jpg'.format(frame_idx)
+                    mask_name = '{}.png'.format(frame_idx)
+                    samples.append({
+                        'name': '{}__frame_{}'.format(uid, frame_idx),
+                        'image_path': os.path.join(
+                            sample_root, 'frames', frame_name),
+                        'audio_path': audio_path,
+                        'mask_path': os.path.join(
+                            sample_root, 'labels_semantic', mask_name),
+                        'mask_threshold': 0,
+                        'meta': {
+                            'uid': uid,
+                            'frame_idx': frame_idx,
+                            'a_obj': row.get('a_obj'),
+                        },
+                    })
+
+        return samples
+
+    def get_gt_map(self, name):
+        annotation_path = self.annotation_paths.get(name)
+        if annotation_path is None:
+            raise KeyError('No annotation registered for {}'.format(name))
+
+        if self._annotation_format == 'bbox_xml':
+            gt_map = np.zeros([224, 224])
+            bboxs = []
+            gt = ET.parse(annotation_path).getroot()
+
+            for child in gt:
+                if child.tag == 'bbox':
+                    for childs in child:
+                        bbox_normalized = [float(x.text) for x in childs]
+                        bbox = [int(x * 224) for x in bbox_normalized]
+                        bboxs.append(bbox)
+
+            for item in bboxs:
+                xmin, ymin, xmax, ymax = item
+                gt_map[ymin:ymax, xmin:xmax] = 1
+
+            return gt_map, bboxs
+
+        mask = Image.open(annotation_path).convert('L')
+        if mask.size != (224, 224):
+            mask = mask.resize((224, 224), Image.NEAREST)
+
+        mask = np.array(mask)
+        threshold = self.annotation_thresholds.get(name, 127)
+        gt_map = np.zeros([224, 224])
+        gt_map[mask > threshold] = 1
+        return gt_map, []
 
     def _init_transform(self):
         mean = [0.485, 0.456, 0.406]
