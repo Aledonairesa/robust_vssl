@@ -34,7 +34,9 @@ def normalize_img(value, vmax=None, vmin=None):
     return value
 
 
-def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None, ciou=None,  testset=None, img_size=224, save_dir=None ):
+def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None,
+                     ciou=None, testset=None, img_size=224, save_dir=None,
+                     contour_mask=None):
     '''
     visualization for both image with heatmap and boundingbox if it is available
     heatmap_array shape [1,1,14,14]
@@ -77,6 +79,17 @@ def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None, ciou=None
                 lefttop = (box[0], box[1])
                 rightbottom = (box[2], box[3])
                 img = cv2.rectangle(img, lefttop, rightbottom, (0, 0, 255), 1)
+
+        if contour_mask is not None:
+            contour_mask = contour_mask.astype(np.uint8)
+            if contour_mask.shape != (img_size, img_size):
+                contour_mask = cv2.resize(
+                    contour_mask, (img_size, img_size),
+                    interpolation=cv2.INTER_NEAREST)
+            contour_mask[contour_mask > 0] = 255
+            contours, _ = cv2.findContours(
+                contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            img = cv2.drawContours(img, contours, -1, (0, 255, 255), 2)
 
         # img_box = img
         for x in range(heatmap.shape[0]):

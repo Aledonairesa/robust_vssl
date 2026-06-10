@@ -155,9 +155,28 @@ def build_vggss_gt_map(args, name):
     return gt_map, bboxs
 
 
+def build_is3plus_mask_gt_map(args, name):
+    mask_path = os.path.join(
+        args.is3plus_test_path, 'gt_segmentation', name + '.jpg')
+    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        raise FileNotFoundError(
+            'IS3plus segmentation mask not found: {}'.format(mask_path))
+
+    if mask.shape != (224, 224):
+        mask = cv2.resize(
+            mask, dsize=(224, 224), interpolation=cv2.INTER_NEAREST)
+
+    gt_map = np.zeros([224, 224])
+    gt_map[mask > 127] = 1
+    return gt_map, []
+
+
 def build_gt_map(args, annotation_type, name):
     if annotation_type == 'vggss':
         return build_vggss_gt_map(args, name)
+    if annotation_type == 'is3plus_mask':
+        return build_is3plus_mask_gt_map(args, name)
     raise ValueError('Unknown annotation type: {}'.format(annotation_type))
 
 
@@ -603,6 +622,8 @@ def test(test_loader, model, criterion, device, epoch, args):
 
     # Compute ciou
     val_ious_meter = []
+    has_annotations = getattr(test_loader.dataset, 'has_annotations', False)
+    annotation_type = getattr(test_loader.dataset, 'annotation_type', None)
 
     # dir for saving validationset heatmap images 
     save_dir = os.path.join(args.images_path, "test", str(epoch), args.test_set)
@@ -641,52 +662,38 @@ def test(test_loader, model, criterion, device, epoch, args):
             batch_time.update(time.time() - end)
             end = time.time()
 
-            heatmap_arr =  heatmap.data.cpu().numpy()
+            if has_annotations:
+                heatmap_arr =  heatmap.data.cpu().numpy()
 
-            for i in range(spec.shape[0]):
-                
-                heatmap_now = cv2.resize(heatmap_arr[i,0], dsize=(224, 224), interpolation=cv2.INTER_LINEAR)
-                heatmap_now = normalize_img(-heatmap_now)
-                gt_map = np.zeros([224,224])
-                bboxs = []
+                for i in range(spec.shape[0]):
 
-                if args.test_set == 'VGGSS':
-                    gt = ET.parse(args.vggss_test_path + '/anno/' + '%s.xml' % name[i]).getroot()
-                    
-                    for child in gt:                 
-                        if child.tag == 'bbox':
-                            for childs in child:
-                                bbox_normalized = [ float(x.text) for x in childs  ]
-                                bbox = [int(x*224) for x in bbox_normalized ]           
-                                bboxs.append(bbox)
-                
-                    for item in bboxs:
-                        xmin, ymin, xmax, ymax = item
-                        gt_map[ymin:ymax, xmin:xmax] = 1
+                    heatmap_now = cv2.resize(heatmap_arr[i,0], dsize=(224, 224), interpolation=cv2.INTER_LINEAR)
+                    heatmap_now = normalize_img(-heatmap_now)
+                    gt_map, bboxs = build_gt_map(args, annotation_type, name[i])
 
-                else:
-                    print('Testing dataset Not Assigned !')
+                    pred =  heatmap_now
+                    pred = 1 - pred
+                    threshold = np.sort(pred.flatten())[int(pred.shape[0] * pred.shape[1] / 2)]    # 计算threshold
+                    pred[pred>threshold]  = 1
+                    pred[pred<1] = 0
+                    evaluator = Evaluator()
+                    ciou, inter, union = evaluator.cal_CIOU(pred, gt_map, 0.5)
 
-                pred =  heatmap_now
-                pred = 1 - pred
-                threshold = np.sort(pred.flatten())[int(pred.shape[0] * pred.shape[1] / 2)]    # 计算threshold
-                pred[pred>threshold]  = 1
-                pred[pred<1] = 0
-                evaluator = Evaluator()
-                ciou, inter, union = evaluator.cal_CIOU(pred, gt_map, 0.5)
+                    val_ious_meter.append(ciou)
 
-                val_ious_meter.append(ciou)  
+                    heatmap_vis = np.expand_dims(heatmap_arr[i], axis=0)
+                    # img_vis = img_arrs[i]
+                    img_vis_tensor = image[i]
+                    img_vis = tensor2img(img_vis_tensor.data.cpu())
 
-                heatmap_vis = np.expand_dims(heatmap_arr[i], axis=0)
-                # img_vis = img_arrs[i]
-                img_vis_tensor = image[i]
-                img_vis = tensor2img(img_vis_tensor.data.cpu())
+                    name_vis = name[i]
+                    bbox_vis = bboxs
+                    contour_mask = (
+                        gt_map if annotation_type == 'is3plus_mask' else None)
 
-                name_vis = name[i]
-                bbox_vis = bboxs
-                
-                heatmap_img = vis_heatmap_bbox(heatmap_vis, img_vis, name_vis,\
-                        bbox=bbox_vis, ciou=ciou, save_dir=save_dir )
+                    heatmap_img = vis_heatmap_bbox(heatmap_vis, img_vis, name_vis,\
+                            bbox=bbox_vis, ciou=ciou, save_dir=save_dir,
+                            contour_mask=contour_mask)
             
     mean_ciou = np.sum(np.array(val_ious_meter) >= 0.5)/ len(val_ious_meter)
     auc_val = cal_auc(val_ious_meter)
@@ -793,10 +800,7 @@ def main(args):
         args.test_logger = Logger(path=logger_path)
         args.test_logger.log('args=\n\t\t'+'\n\t\t'.join(['%s:%s'%(str(k),str(v)) for k,v in vars(args).items()]))
 
-        if args.test_set == 'VGGSS':
-            test_dataset = GetAudioVideoDataset(args, mode='test')
-        else:
-            raise ValueError('Unknown test set: {}'.format(args.test_set))
+        test_dataset = GetAudioVideoDataset(args, mode='test')
 
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,\
             num_workers=args.n_threads, pin_memory=True)

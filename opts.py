@@ -18,12 +18,15 @@ def get_arguments():
     parser.add_argument('--trainset_path', default='/', type=str, help='Root directory path of training data')
     parser.add_argument('--vggss_test_path', default='/',\
             type=str, help='Root directory path of data')
+    parser.add_argument('--is3plus_test_path', default='data/IS3plus',
+                        type=str, help='Root directory path of IS3plus data')
    
     parser.add_argument('--train_set_scale', default='fullset', type=str, help="fullset | subset_144k | subset_143k | subset_10k | subset_1k | subset_100")
     parser.add_argument('--test_set_scale', default='fullset', type=str, help="fullset | subset_250 | subset_50")
     parser.add_argument('--val_set_scale', default='subset_1k', type=str, help='validation set scale: subset_1k | subset_250')
     parser.add_argument('--test_set', default="VGGSS", type=str,
-                        choices=['VGGSS'], help='Testing set: VGGSS')
+                        choices=['VGGSS', 'IS3plus'],
+                        help='Testing set: VGGSS | IS3plus')
 
     parser.add_argument('--model_name', default='vgg', type=str, help='test files')
     

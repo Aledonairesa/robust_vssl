@@ -1,3 +1,4 @@
+import json
 import os
 import torch
 import torch
@@ -65,22 +66,51 @@ class GetAudioVideoDataset(Dataset):
                 self.sample_layout = 'vggs_train'
 
         elif mode=='test':
-            if self.args.test_set_scale == 'subset_250':
-                test_list_file = 'test_vggss_250.txt'
-            elif self.args.test_set_scale == 'subset_50':
-                test_list_file = 'test_vggss_50.txt'
-            else:
-                test_list_file = 'test_vggss_4911.txt'
-            
-            with open('metadata/' + test_list_file, 'r') as f:
-                txt_reader = f.readlines()
-                for item in txt_reader[:]:
-                    data.append(item.split('.')[0])
-                self.audio_path = args.vggss_test_path + '/audio/'
-                self.video_path = args.vggss_test_path + '/frame/'
+            if self.args.test_set == 'VGGSS':
+                if self.args.test_set_scale == 'subset_250':
+                    test_list_file = 'test_vggss_250.txt'
+                elif self.args.test_set_scale == 'subset_50':
+                    test_list_file = 'test_vggss_50.txt'
+                else:
+                    test_list_file = 'test_vggss_4911.txt'
+
+                with open('metadata/' + test_list_file, 'r') as f:
+                    txt_reader = f.readlines()
+                    for item in txt_reader[:]:
+                        data.append(item.split('.')[0])
+                    self.audio_path = args.vggss_test_path + '/audio/'
+                    self.video_path = args.vggss_test_path + '/frame/'
+                    self.has_annotations = True
+                    self.annotation_type = 'vggss'
+                    self.sample_layout = 'flat_image'
+            elif self.args.test_set == 'IS3plus':
+                is3plus_root = args.is3plus_test_path
+                annotation_file = os.path.join(
+                    is3plus_root, 'IS3plus_annotation.json')
+                with open(annotation_file, 'r', encoding='utf-8') as f:
+                    annotations = json.load(f)
+
+                for item in annotations:
+                    image_path = self._resolve_dataset_path(
+                        is3plus_root, item['image'])
+                    audio_path = self._resolve_dataset_path(
+                        is3plus_root, item['audio'])
+                    name = os.path.splitext(os.path.basename(image_path))[0]
+                    mask_path = os.path.join(
+                        is3plus_root, 'gt_segmentation', name + '.jpg')
+                    data.append({
+                        'name': name,
+                        'image_path': image_path,
+                        'audio_path': audio_path,
+                        'mask_path': mask_path,
+                    })
+
                 self.has_annotations = True
-                self.annotation_type = 'vggss'
-                self.sample_layout = 'flat_image'
+                self.annotation_type = 'is3plus_mask'
+                self.sample_layout = 'explicit_paths'
+            else:
+                raise ValueError('Unknown test set: {}'.format(
+                    self.args.test_set))
                 
         elif mode=='val':
             if self.args.val_set_scale == 'subset_250':
@@ -120,23 +150,43 @@ class GetAudioVideoDataset(Dataset):
         self.video_files = []
    
         for item in data[:]:
-            # Define audio path
-            audio_check_path = os.path.join(self.audio_path, item + '.wav')
-            
-            # Define image path based on dataset and mode
-            if self.sample_layout == 'vggs_train':
-                image_check_path = os.path.join(self.video_path, item, '125.jpg')
+            if self.sample_layout == 'explicit_paths':
+                audio_check_path = item['audio_path']
+                image_check_path = item['image_path']
+                annotation_check_path = item.get('mask_path')
             else:
-                image_check_path = os.path.join(self.video_path, item + '.jpg')
-            
-            # Ensure both exist before appending
-            if os.path.exists(audio_check_path) and os.path.exists(image_check_path):
+                # Define audio path
+                audio_check_path = os.path.join(self.audio_path, item + '.wav')
+
+                # Define image path based on dataset and mode
+                if self.sample_layout == 'vggs_train':
+                    image_check_path = os.path.join(self.video_path, item, '125.jpg')
+                else:
+                    image_check_path = os.path.join(self.video_path, item + '.jpg')
+                annotation_check_path = None
+
+            files_exist = (
+                os.path.exists(audio_check_path)
+                and os.path.exists(image_check_path)
+                and (
+                    annotation_check_path is None
+                    or os.path.exists(annotation_check_path)
+                )
+            )
+
+            # Ensure required files exist before appending
+            if files_exist:
                 self.video_files.append(item)
 
         print("{0} requested dataset size: {1}".format(self.mode.upper() , len(data)))
         print("{0} actual available size: {1}".format(self.mode.upper() , len(self.video_files)))
         
         self.count = 0
+
+    def _resolve_dataset_path(self, root, relative_path):
+        if relative_path.startswith('./') or relative_path.startswith('.\\'):
+            relative_path = relative_path[2:]
+        return os.path.normpath(os.path.join(root, relative_path))
 
     def _init_transform(self):
         mean = [0.485, 0.456, 0.406]
@@ -256,17 +306,26 @@ class GetAudioVideoDataset(Dataset):
     def __getitem__(self, idx):
         file = self.video_files[idx]
 
-        if self.sample_layout == 'vggs_train':
+        if self.sample_layout == 'explicit_paths':
+            frame = self.img_transform(self._load_frame(file['image_path']))
+            samples, samplerate = torchaudio.load(file['audio_path'])
+            if samples.shape[0] > 1: # if stereo convert to mono
+                samples = torch.mean(samples, dim=0, keepdim=True)
+            name = file['name']
+
+        elif self.sample_layout == 'vggs_train':
             frame = self.img_transform(self._load_frame(os.path.join( self.video_path, file , '125.jpg' ) ))
             samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.wav'))
             if samples.shape[0] > 1: # if stereo convert to mono
                 samples = torch.mean(samples, dim=0, keepdim=True)
+            name = file
 
         else:
             frame = self.img_transform(self._load_frame( os.path.join(self.video_path , file + '.jpg')  ))
             samples, samplerate = torchaudio.load(os.path.join(self.audio_path, file + '.wav'))
             if samples.shape[0] > 1: # if stereo convert to mono
                 samples = torch.mean(samples, dim=0, keepdim=True)
+            name = file
 
 
         target_duration = 30 if self.args.aud_backbone_type == 'whisper' else 10
@@ -280,4 +339,4 @@ class GetAudioVideoDataset(Dataset):
 
         spectrogram = self._build_audio_input(samples, samplerate)
 
-        return frame, spectrogram, 'samples', file
+        return frame, spectrogram, 'samples', name
