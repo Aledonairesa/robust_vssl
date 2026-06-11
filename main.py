@@ -754,8 +754,8 @@ def main(args):
                     print('[WARNING] failed to load criterion state')
         
         else:
-            print("[Warning] no checkpoint found at '{}'".format(args.test))
-            epoch = 0
+            raise FileNotFoundError(
+                "Testing checkpoint not found: '{}'".format(args.test))
 
         logger_path = os.path.join(args.logs_path, 'test')
         os.makedirs(logger_path, exist_ok=True)
