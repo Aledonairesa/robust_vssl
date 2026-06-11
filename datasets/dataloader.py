@@ -45,6 +45,7 @@ class GetAudioVideoDataset(Dataset):
         self.sample_layout = None
         self.annotation_paths = {}
         self.annotation_thresholds = {}
+        self.mask_transform = None
 
         if mode=='train':
             if self.args.train_set_scale == 'subset_144k':
@@ -262,7 +263,8 @@ class GetAudioVideoDataset(Dataset):
             raise KeyError('No annotation registered for {}'.format(name))
 
         if self._annotation_format == 'bbox_xml':
-            gt_map = np.zeros([224, 224])
+            gt_size = self.imgSize
+            gt_map = np.zeros([gt_size, gt_size])
             bboxs = []
             gt = ET.parse(annotation_path).getroot()
 
@@ -270,7 +272,7 @@ class GetAudioVideoDataset(Dataset):
                 if child.tag == 'bbox':
                     for childs in child:
                         bbox_normalized = [float(x.text) for x in childs]
-                        bbox = [int(x * 224) for x in bbox_normalized]
+                        bbox = [int(x * gt_size) for x in bbox_normalized]
                         bboxs.append(bbox)
 
             for item in bboxs:
@@ -280,12 +282,14 @@ class GetAudioVideoDataset(Dataset):
             return gt_map, bboxs
 
         mask = Image.open(annotation_path).convert('L')
-        if mask.size != (224, 224):
-            mask = mask.resize((224, 224), Image.NEAREST)
+        if self.mask_transform is not None:
+            mask = self.mask_transform(mask)
+        elif mask.size != (self.imgSize, self.imgSize):
+            mask = mask.resize((self.imgSize, self.imgSize), Image.NEAREST)
 
         mask = np.array(mask)
         threshold = self.annotation_thresholds.get(name, 127)
-        gt_map = np.zeros([224, 224])
+        gt_map = np.zeros(mask.shape)
         gt_map[mask > threshold] = 1
         return gt_map, []
 
@@ -340,6 +344,9 @@ class GetAudioVideoDataset(Dataset):
                 transforms.CenterCrop(self.imgSize),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std)])            
+            self.mask_transform = transforms.Compose([
+                transforms.Resize(self.imgSize, Image.NEAREST),
+                transforms.CenterCrop(self.imgSize)])
 
     def _init_atransform(self):
         self.aid_transform = transforms.Compose([transforms.ToTensor()])

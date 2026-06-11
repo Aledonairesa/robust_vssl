@@ -504,12 +504,12 @@ def validate(val_loader, model, criterion, device, epoch, args):
                 heatmap_arr = heatmap.data.cpu().numpy()
 
                 for i in range(spec.shape[0]):
+                    gt_map, bboxs = val_loader.dataset.get_gt_map(name[i])
                     heatmap_now = cv2.resize(
                         heatmap_arr[i, 0],
-                        dsize=(224, 224),
+                        dsize=(gt_map.shape[1], gt_map.shape[0]),
                         interpolation=cv2.INTER_LINEAR)
                     heatmap_now = normalize_img(-heatmap_now)
-                    gt_map, bboxs = val_loader.dataset.get_gt_map(name[i])
 
                     pred = heatmap_now
                     pred = 1 - pred
@@ -622,9 +622,12 @@ def test(test_loader, model, criterion, device, epoch, args):
 
                 for i in range(spec.shape[0]):
 
-                    heatmap_now = cv2.resize(heatmap_arr[i,0], dsize=(224, 224), interpolation=cv2.INTER_LINEAR)
-                    heatmap_now = normalize_img(-heatmap_now)
                     gt_map, bboxs = test_loader.dataset.get_gt_map(name[i])
+                    heatmap_now = cv2.resize(
+                        heatmap_arr[i,0],
+                        dsize=(gt_map.shape[1], gt_map.shape[0]),
+                        interpolation=cv2.INTER_LINEAR)
+                    heatmap_now = normalize_img(-heatmap_now)
 
                     pred =  heatmap_now
                     pred = 1 - pred
@@ -639,7 +642,9 @@ def test(test_loader, model, criterion, device, epoch, args):
                     heatmap_vis = np.expand_dims(heatmap_arr[i], axis=0)
                     # img_vis = img_arrs[i]
                     img_vis_tensor = image[i]
-                    img_vis = tensor2img(img_vis_tensor.data.cpu())
+                    img_vis = tensor2img(
+                        img_vis_tensor.data.cpu(),
+                        resolution=(args.image_size, args.image_size))
 
                     name_vis = name[i]
                     bbox_vis = bboxs
@@ -650,7 +655,8 @@ def test(test_loader, model, criterion, device, epoch, args):
 
                     heatmap_img = vis_heatmap_bbox(heatmap_vis, img_vis, name_vis,\
                             bbox=bbox_vis, ciou=ciou, save_dir=save_dir,
-                            contour_mask=contour_mask)
+                            contour_mask=contour_mask,
+                            img_size=args.image_size)
             
     mean_ciou = np.sum(np.array(val_ious_meter) >= 0.5)/ len(val_ious_meter)
     auc_val = cal_auc(val_ious_meter)

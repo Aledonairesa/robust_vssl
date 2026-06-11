@@ -7,8 +7,7 @@ class Evaluator():
 
     def cal_CIOU(self, infer, gtmap, thres=0.01, return_masks=False):
         # gtmap: 所有bbox里面的值，都设定为1，其他的设定为0
-        # infer_map = np.zeros((112, 112)) 
-        infer_map = np.zeros((224, 224)) 
+        infer_map = np.zeros_like(gtmap)
         infer_map[infer>=thres] = 1  # 预测：经过thresholding之后，预测的positive的点设置为1
         ciou = np.sum(infer_map*gtmap) / (np.sum(gtmap)+np.sum(infer_map*(gtmap==0)))   # 
         # IoU: intersaction：通过两个二值图相乘即可， Union: GTmap的像素数目+ (pred的像素数目扣除二者重叠部分的像素数目 )
