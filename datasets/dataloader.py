@@ -206,6 +206,11 @@ class GetAudioVideoDataset(Dataset):
 
         print("{0} requested dataset size: {1}".format(self.mode.upper() , len(data)))
         print("{0} actual available size: {1}".format(self.mode.upper() , len(self.video_files)))
+        if len(self.video_files) == 0:
+            raise RuntimeError(
+                '{0} dataset has no available samples. Requested {1} '
+                'samples, but none had all required files.'
+                .format(self.mode.upper(), len(data)))
 
         self.count = 0
 
@@ -223,6 +228,8 @@ class GetAudioVideoDataset(Dataset):
             reader = csv.DictReader(f)
             for row in reader:
                 if row['split'] != 'test':
+                    continue
+                if row['label'] != 'v1s':
                     continue
 
                 uid = row['uid']
