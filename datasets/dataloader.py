@@ -340,13 +340,11 @@ class GetAudioVideoDataset(Dataset):
                 
         else:
             self.img_transform = transforms.Compose([
-                transforms.Resize(self.imgSize, Image.BICUBIC),
-                transforms.CenterCrop(self.imgSize),
+                transforms.Resize((self.imgSize, self.imgSize), Image.BICUBIC),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std)])            
             self.mask_transform = transforms.Compose([
-                transforms.Resize(self.imgSize, Image.NEAREST),
-                transforms.CenterCrop(self.imgSize)])
+                transforms.Resize((self.imgSize, self.imgSize), Image.NEAREST)])
 
     def _init_atransform(self):
         self.aid_transform = transforms.Compose([transforms.ToTensor()])

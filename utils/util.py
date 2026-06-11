@@ -76,13 +76,21 @@ def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None,
         heatmap = cv2.resize(heatmap_arr[0,0], dsize=(img_size, img_size), interpolation=cv2.INTER_LINEAR)
         heatmap = normalize_img(-heatmap)
 
-        # bbox = False
+        # img_box = img
+        for x in range(heatmap.shape[0]):
+            for y in range(heatmap.shape[1]):
+                heatmap[x][y] = (heatmap[x][y] * 255).astype(np.uint8)
+        heatmap = heatmap.astype(np.uint8)
+        heatmap_img = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        heatmap_on_img = cv2.addWeighted(heatmap_img, 0.5, img, 0.5, 0)
+
+        # Draw annotations after heatmap blending so their color stays exact.
         if bbox:
             for box in bbox:
                 lefttop = (box[0], box[1])
                 rightbottom = (box[2], box[3])
-                img = cv2.rectangle(
-                    img, lefttop, rightbottom,
+                heatmap_on_img = cv2.rectangle(
+                    heatmap_on_img, lefttop, rightbottom,
                     ANNOTATION_COLOR, ANNOTATION_LINE_WIDTH)
 
         if contour_mask is not None:
@@ -94,17 +102,9 @@ def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None,
             contour_mask[contour_mask > 0] = 255
             contours, _ = cv2.findContours(
                 contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            img = cv2.drawContours(
-                img, contours, -1,
+            heatmap_on_img = cv2.drawContours(
+                heatmap_on_img, contours, -1,
                 ANNOTATION_COLOR, ANNOTATION_LINE_WIDTH)
-
-        # img_box = img
-        for x in range(heatmap.shape[0]):
-            for y in range(heatmap.shape[1]):
-                heatmap[x][y] = (heatmap[x][y] * 255).astype(np.uint8)
-        heatmap = heatmap.astype(np.uint8)
-        heatmap_img = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-        heatmap_on_img = cv2.addWeighted(heatmap_img, 0.5, img, 0.5, 0)
 
         # if ciou:
         #     cv2.putText(heatmap_on_img, 'IoU:' + '%.4f' % ciou , org=(25, 25), fontFace=cv2.FONT_HERSHEY_SIMPLEX, 
