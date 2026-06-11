@@ -4,6 +4,9 @@ import torch
 import torch.nn.functional as F
 import os
 
+ANNOTATION_COLOR = (0, 255, 0)
+ANNOTATION_LINE_WIDTH = 2
+
 def prepare_device(n_gpu_use):
     """
     setup GPU device if available. get gpu device indices which are used for DataParallel
@@ -78,7 +81,9 @@ def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None,
             for box in bbox:
                 lefttop = (box[0], box[1])
                 rightbottom = (box[2], box[3])
-                img = cv2.rectangle(img, lefttop, rightbottom, (0, 0, 255), 1)
+                img = cv2.rectangle(
+                    img, lefttop, rightbottom,
+                    ANNOTATION_COLOR, ANNOTATION_LINE_WIDTH)
 
         if contour_mask is not None:
             contour_mask = contour_mask.astype(np.uint8)
@@ -89,7 +94,9 @@ def vis_heatmap_bbox(heatmap_arr, img_array, img_name=None, bbox=None,
             contour_mask[contour_mask > 0] = 255
             contours, _ = cv2.findContours(
                 contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            img = cv2.drawContours(img, contours, -1, (0, 255, 255), 2)
+            img = cv2.drawContours(
+                img, contours, -1,
+                ANNOTATION_COLOR, ANNOTATION_LINE_WIDTH)
 
         # img_box = img
         for x in range(heatmap.shape[0]):
@@ -165,7 +172,9 @@ def vis_masks(masks, img_array, img_name=None, bbox=None, ciou=None,  testset=No
         for box in bbox:
             lefttop = (box[0], box[1])
             rightbottom = (box[2], box[3])
-            img = cv2.rectangle(img, lefttop, rightbottom, (128, 0, 128), 1)
+            img = cv2.rectangle(
+                img, lefttop, rightbottom,
+                ANNOTATION_COLOR, ANNOTATION_LINE_WIDTH)
 
 
     inter_img = img.copy()
