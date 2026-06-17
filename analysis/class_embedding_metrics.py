@@ -55,6 +55,27 @@ def _class_names(labels):
     return sorted(set(labels) - {UNKNOWN_LABEL})
 
 
+def _dataset_fields(split, dataset_name):
+    fields = {'split': split}
+    if split == 'test':
+        fields['test_set'] = dataset_name
+    else:
+        fields['dataset'] = dataset_name
+    return fields
+
+
+def _display_split(split):
+    if split == 'val':
+        return 'Validation'
+    return split.capitalize()
+
+
+def _artifact_prefix(split, dataset_name):
+    if split == 'test':
+        return 'test_{}'.format(dataset_name)
+    return '{}_{}'.format(split, dataset_name.lower())
+
+
 def _class_centroid_cosine_similarity_matrix(image_emb, audio_emb, labels):
     labels = np.asarray(labels)
     classes = _class_names(labels)
@@ -88,8 +109,8 @@ def _relative_modality_gap(paired_distances, image_distances,
     return float(paired_gap / denominator)
 
 
-def compute_class_metrics(test_set, epoch, embedding_file, image_emb,
-                          audio_emb, labels):
+def compute_class_metrics(dataset_name, epoch, embedding_file, image_emb,
+                          audio_emb, labels, split='test'):
     labels = np.asarray(labels)
     rows = []
     value_sets = {}
@@ -116,8 +137,7 @@ def compute_class_metrics(test_set, epoch, embedding_file, image_emb,
 
         row = {
             'epoch': epoch,
-            'split': 'test',
-            'test_set': test_set,
+            **_dataset_fields(split, dataset_name),
             'broad_class': class_name,
             'num_samples': int(mask.sum()),
             'embedding_file': str(embedding_file),
@@ -193,8 +213,8 @@ def _topk_distribution_matrix(query_emb, target_emb, query_labels,
     return matrix, mean_counts, query_counts, effective_top_k
 
 
-def compute_topk_retrieval_rows(test_set, epoch, embedding_file, image_emb,
-                                audio_emb, labels, top_k):
+def compute_topk_retrieval_rows(dataset_name, epoch, embedding_file, image_emb,
+                                audio_emb, labels, top_k, split='test'):
     labels = np.asarray(labels)
     known_mask = labels != UNKNOWN_LABEL
     known_labels = labels[known_mask]
@@ -226,8 +246,7 @@ def compute_topk_retrieval_rows(test_set, epoch, embedding_file, image_emb,
             for target_idx, target_class in enumerate(classes):
                 rows.append({
                     'epoch': epoch,
-                    'split': 'test',
-                    'test_set': test_set,
+                    **_dataset_fields(split, dataset_name),
                     'direction': direction,
                     'query_class': query_class,
                     'retrieved_class': target_class,
@@ -275,7 +294,8 @@ def _sample_values(values, max_points=400):
     return np.sort(values)[indices]
 
 
-def plot_class_distance_lollipop(rows, value_sets, test_set, epoch, plots_dir):
+def plot_class_distance_lollipop(rows, value_sets, dataset_name, epoch,
+                                 plots_dir, split='test'):
     rows = _sorted_rows(rows, 'mean_paired_cosine_distance',
                         descending=False)
     if not rows:
@@ -370,19 +390,21 @@ def plot_class_distance_lollipop(rows, value_sets, test_set, epoch, plots_dir):
     ax.set_yticklabels(classes)
     ax.set_xlabel('Cosine distance ((1 - cosine) / 2)')
     ax.set_title(
-        'Test {} paired vs same-class unpaired distances epoch {:04d}'
-        .format(test_set, epoch))
+        '{} {} paired vs same-class unpaired distances epoch {:04d}'
+        .format(_display_split(split), dataset_name, epoch))
     ax.grid(True, axis='x', alpha=0.25)
     ax.legend(loc='best', fontsize=8)
 
     output_path = (
         Path(plots_dir) / 'class_distance_lollipop' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     _save_figure(fig, output_path, 'Saved class distance lollipop plot to')
 
 
-def plot_class_separability(rows, test_set, epoch, plots_dir):
+def plot_class_separability(rows, dataset_name, epoch, plots_dir,
+                            split='test'):
     rows = _sorted_rows(rows, 'global_separability', descending=True)
     if not rows:
         return
@@ -394,18 +416,21 @@ def plot_class_separability(rows, test_set, epoch, plots_dir):
     ax.axhline(0, color='0.25', linewidth=0.8)
     ax.set_ylabel('Paired Q1 - same-class unpaired Q3')
     ax.set_title(
-        'Test {} class separability epoch {:04d}'.format(test_set, epoch))
+        '{} {} class separability epoch {:04d}'.format(
+            _display_split(split), dataset_name, epoch))
     ax.tick_params(axis='x', rotation=35)
     ax.grid(True, axis='y', alpha=0.25)
 
     output_path = (
         Path(plots_dir) / 'class_separability' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     _save_figure(fig, output_path, 'Saved class separability plot to')
 
 
-def plot_class_intra_spread(rows, test_set, epoch, plots_dir):
+def plot_class_intra_spread(rows, dataset_name, epoch, plots_dir,
+                            split='test'):
     finite_rows = [
         row for row in rows
         if (
@@ -440,19 +465,21 @@ def plot_class_intra_spread(rows, test_set, epoch, plots_dir):
     ax.set_xticklabels(classes, rotation=35, ha='right')
     ax.set_ylabel('Mean within-class cosine distance')
     ax.set_title(
-        'Test {} image/audio intra spread epoch {:04d}'.format(
-            test_set, epoch))
+        '{} {} image/audio intra spread epoch {:04d}'.format(
+            _display_split(split), dataset_name, epoch))
     ax.legend(loc='best')
     ax.grid(True, axis='y', alpha=0.25)
 
     output_path = (
         Path(plots_dir) / 'class_intra_spread' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     _save_figure(fig, output_path, 'Saved class intra-spread plot to')
 
 
-def plot_class_centroid_alignment(rows, test_set, epoch, plots_dir):
+def plot_class_centroid_alignment(rows, dataset_name, epoch, plots_dir,
+                                  split='test'):
     rows = _sorted_rows(rows, 'centroid_cosine_similarity', descending=True)
     if not rows:
         return
@@ -464,20 +491,22 @@ def plot_class_centroid_alignment(rows, test_set, epoch, plots_dir):
     ax.axhline(0, color='0.25', linewidth=0.8)
     ax.set_ylabel('Image/audio centroid cosine similarity')
     ax.set_title(
-        'Test {} class centroid alignment epoch {:04d}'.format(
-            test_set, epoch))
+        '{} {} class centroid alignment epoch {:04d}'.format(
+            _display_split(split), dataset_name, epoch))
     ax.tick_params(axis='x', rotation=35)
     ax.grid(True, axis='y', alpha=0.25)
 
     output_path = (
         Path(plots_dir) / 'class_centroid_alignment' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     _save_figure(fig, output_path, 'Saved class centroid alignment plot to')
 
 
 def plot_class_centroid_cosine_similarity_heatmap(image_emb, audio_emb, labels,
-                                                  test_set, epoch, plots_dir):
+                                                  dataset_name, epoch,
+                                                  plots_dir, split='test'):
     classes, matrix = _class_centroid_cosine_similarity_matrix(
         image_emb, audio_emb, labels)
     if not classes:
@@ -493,8 +522,8 @@ def plot_class_centroid_cosine_similarity_heatmap(image_emb, audio_emb, labels,
     ax.set_xlabel('Audio centroid class')
     ax.set_ylabel('Image centroid class')
     ax.set_title(
-        'Test {} image/audio class centroid cosine similarity epoch {:04d}'
-        .format(test_set, epoch))
+        '{} {} image/audio class centroid cosine similarity epoch {:04d}'
+        .format(_display_split(split), dataset_name, epoch))
 
     for row_idx in range(matrix.shape[0]):
         for col_idx in range(matrix.shape[1]):
@@ -513,7 +542,8 @@ def plot_class_centroid_cosine_similarity_heatmap(image_emb, audio_emb, labels,
     fig.colorbar(im, ax=ax, label='Cosine similarity')
     output_path = (
         Path(plots_dir) / 'class_centroid_cosine_similarity_heatmap' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     _save_figure(
         fig, output_path, 'Saved class centroid cosine-similarity heatmap to')
@@ -556,8 +586,8 @@ def _draw_topk_heatmap(ax, matrix, classes, title):
     return im
 
 
-def plot_class_topk_retrieval_distribution(retrieval_rows, test_set, epoch,
-                                           plots_dir):
+def plot_class_topk_retrieval_distribution(retrieval_rows, dataset_name, epoch,
+                                           plots_dir, split='test'):
     classes = sorted(set(row['query_class'] for row in retrieval_rows))
     if not classes:
         return
@@ -585,14 +615,15 @@ def plot_class_topk_retrieval_distribution(retrieval_rows, test_set, epoch,
         'Audio -> image top-{} class distribution'.format(top_k),
     )
     fig.suptitle(
-        'Test {} top-{} retrieval distribution by broad class epoch {:04d}'
-        .format(test_set, top_k, epoch))
+        '{} {} top-{} retrieval distribution by broad class epoch {:04d}'
+        .format(_display_split(split), dataset_name, top_k, epoch))
     fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.82,
                  label='Fraction of top-{} retrieved items'.format(top_k))
 
     output_path = (
         Path(plots_dir) / 'class_topk_retrieval_distribution' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -600,7 +631,8 @@ def plot_class_topk_retrieval_distribution(retrieval_rows, test_set, epoch,
     print('Saved class top-k retrieval plot to {}'.format(output_path))
 
 
-def plot_class_relative_modality_gap(rows, test_set, epoch, plots_dir):
+def plot_class_relative_modality_gap(rows, dataset_name, epoch, plots_dir,
+                                     split='test'):
     rows = _sorted_rows(rows, 'relative_modality_gap', descending=False)
     if not rows:
         return
@@ -611,26 +643,30 @@ def plot_class_relative_modality_gap(rows, test_set, epoch, plots_dir):
     ax.bar(classes, values, color='#b279a2')
     ax.set_ylabel('Relative modality gap')
     ax.set_title(
-        'Test {} relative modality gap epoch {:04d}'.format(
-            test_set, epoch))
+        '{} {} relative modality gap epoch {:04d}'.format(
+            _display_split(split), dataset_name, epoch))
     ax.tick_params(axis='x', rotation=35)
     ax.grid(True, axis='y', alpha=0.25)
 
     output_path = (
         Path(plots_dir) / 'class_relative_modality_gap' /
-        'test_{}_epoch_{:04d}.png'.format(test_set, epoch)
+        '{}_epoch_{:04d}.png'.format(
+            _artifact_prefix(split, dataset_name), epoch)
     )
     _save_figure(fig, output_path, 'Saved class modality-gap plot to')
 
 
 def plot_class_metric_outputs(rows, value_sets, retrieval_rows, image_emb,
-                              audio_emb, labels, test_set, epoch, plots_dir):
-    plot_class_distance_lollipop(rows, value_sets, test_set, epoch, plots_dir)
-    plot_class_separability(rows, test_set, epoch, plots_dir)
-    plot_class_intra_spread(rows, test_set, epoch, plots_dir)
-    plot_class_centroid_alignment(rows, test_set, epoch, plots_dir)
+                              audio_emb, labels, dataset_name, epoch,
+                              plots_dir, split='test'):
+    plot_class_distance_lollipop(
+        rows, value_sets, dataset_name, epoch, plots_dir, split)
+    plot_class_separability(rows, dataset_name, epoch, plots_dir, split)
+    plot_class_intra_spread(rows, dataset_name, epoch, plots_dir, split)
+    plot_class_centroid_alignment(rows, dataset_name, epoch, plots_dir, split)
     plot_class_centroid_cosine_similarity_heatmap(
-        image_emb, audio_emb, labels, test_set, epoch, plots_dir)
+        image_emb, audio_emb, labels, dataset_name, epoch, plots_dir, split)
     plot_class_topk_retrieval_distribution(
-        retrieval_rows, test_set, epoch, plots_dir)
-    plot_class_relative_modality_gap(rows, test_set, epoch, plots_dir)
+        retrieval_rows, dataset_name, epoch, plots_dir, split)
+    plot_class_relative_modality_gap(
+        rows, dataset_name, epoch, plots_dir, split)

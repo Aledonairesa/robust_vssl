@@ -39,6 +39,7 @@ IMAGE_EMBEDDING_KEYS = {
     'maxpool': 'image_emb',
 }
 IMAGE_EMBEDDING_CHOICES = tuple(IMAGE_EMBEDDING_KEYS)
+VAL_BROAD_CLASS_SET = 'VGGS'
 
 
 def parse_args():
@@ -137,23 +138,92 @@ def compute_metrics(path, names=None, image_emb=None, audio_emb=None,
     return row
 
 
-def analyze_val(embeddings_dir, analysis_dir, image_embedding):
+def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
+                class_retrieval_top_k, image_embedding):
     val_dir = embeddings_dir / 'val'
     files = sorted(val_dir.glob('epoch_*.npz'))
     if not files:
         print('No validation embedding files found in {}'.format(val_dir))
         return None
 
-    rows = sorted([
-        compute_metrics(path, image_embedding=image_embedding)
-        for path in files
-    ],
-                  key=lambda row: row['epoch'])
+    rows = []
+    class_rows = []
+    topk_retrieval_rows = []
+    for path in files:
+        names, image_emb, audio_emb = load_embedding_file(
+            path, image_embedding=image_embedding)
+        epoch = parse_epoch(path)
+
+        row = compute_metrics(
+            path, names, image_emb, audio_emb,
+            image_embedding=image_embedding)
+        row['split'] = 'val'
+        row['dataset'] = VAL_BROAD_CLASS_SET
+        rows.append(row)
+
+        try:
+            labels, diagnostics = assign_broad_classes(
+                names, VAL_BROAD_CLASS_SET, broad_classes_dir)
+        except FileNotFoundError as exc:
+            print(exc)
+            continue
+
+        print_broad_class_summary(VAL_BROAD_CLASS_SET, epoch, diagnostics)
+        current_class_rows, value_sets = compute_class_metrics(
+            VAL_BROAD_CLASS_SET,
+            epoch,
+            path,
+            image_emb,
+            audio_emb,
+            labels,
+            split='val',
+        )
+        current_topk_retrieval_rows = compute_topk_retrieval_rows(
+            VAL_BROAD_CLASS_SET,
+            epoch,
+            path,
+            image_emb,
+            audio_emb,
+            labels,
+            class_retrieval_top_k,
+            split='val',
+        )
+        class_rows.extend(current_class_rows)
+        topk_retrieval_rows.extend(current_topk_retrieval_rows)
+        plot_class_metric_outputs(
+            current_class_rows,
+            value_sets,
+            current_topk_retrieval_rows,
+            image_emb,
+            audio_emb,
+            labels,
+            VAL_BROAD_CLASS_SET,
+            epoch,
+            analysis_dir / 'plots',
+            split='val',
+        )
+
+    rows = sorted(rows, key=lambda row: row['epoch'])
     csv_path = analysis_dir / 'val_metrics.csv'
     write_csv(csv_path, rows)
     print('Saved validation metrics to {}'.format(csv_path))
 
     plot_val_metrics(rows, analysis_dir / 'plots')
+
+    class_csv_path = analysis_dir / 'val_vggs_class_metrics.csv'
+    write_csv(class_csv_path, class_rows)
+    if class_rows:
+        print('Saved validation class metrics to {}'.format(class_csv_path))
+
+    topk_retrieval_csv_path = (
+        analysis_dir / 'val_vggs_class_topk_retrieval.csv'
+    )
+    write_csv(topk_retrieval_csv_path, topk_retrieval_rows)
+    if topk_retrieval_rows:
+        print(
+            'Saved validation class top-k retrieval to {}'
+            .format(topk_retrieval_csv_path))
+
     return rows
 
 
@@ -303,7 +373,13 @@ def main():
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     if 'val' in args.splits:
-        analyze_val(embeddings_dir, analysis_dir, args.image_embedding)
+        analyze_val(
+            embeddings_dir,
+            analysis_dir,
+            args.broad_classes_dir,
+            args.class_retrieval_top_k,
+            args.image_embedding,
+        )
     if 'test' in args.splits:
         analyze_test(
             embeddings_dir,

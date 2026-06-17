@@ -11,6 +11,7 @@ from PIL import Image
 try:
     from analyze_embeddings import (
         IMAGE_EMBEDDING_CHOICES,
+        VAL_BROAD_CLASS_SET,
         load_embedding_file,
         parse_epoch,
     )
@@ -22,6 +23,7 @@ try:
 except ImportError:
     from analysis.analyze_embeddings import (
         IMAGE_EMBEDDING_CHOICES,
+        VAL_BROAD_CLASS_SET,
         load_embedding_file,
         parse_epoch,
     )
@@ -472,6 +474,56 @@ def visualize_val_umap(loaded, plots_dir, args):
     create_gif(frame_paths, gif_path, args.gif_duration)
 
 
+def visualize_val_class_umap(loaded, plots_dir, args):
+    all_embeddings = []
+    for path, names, image_emb, audio_emb in loaded:
+        embeddings = stack_modalities(image_emb, audio_emb)
+        all_embeddings.append(embeddings)
+
+    all_embeddings = np.concatenate(all_embeddings, axis=0)
+    reducer = make_umap(args)
+    all_coords = reducer.fit_transform(all_embeddings)
+    limits = axis_limits(all_coords)
+
+    val_plot_dir = plots_dir / 'class_umap' / 'val'
+    val_plot_dir.mkdir(parents=True, exist_ok=True)
+
+    frame_paths = []
+    offset = 0
+    for path, names, image_emb, audio_emb in loaded:
+        embeddings = stack_modalities(image_emb, audio_emb)
+        epoch = parse_epoch(path)
+        coords = all_coords[offset:offset + len(embeddings)]
+        offset += len(embeddings)
+
+        try:
+            labels, diagnostics = assign_broad_classes(
+                names,
+                VAL_BROAD_CLASS_SET,
+                args.broad_classes_dir,
+            )
+        except FileNotFoundError as exc:
+            print(exc)
+            return
+
+        print_broad_class_summary(VAL_BROAD_CLASS_SET, epoch, diagnostics)
+        frame_path = val_plot_dir / 'epoch_{:04d}.png'.format(epoch)
+        plot_broad_class_umap(
+            coords,
+            labels,
+            'Validation {} broad-class UMAP epoch {:04d}'.format(
+                VAL_BROAD_CLASS_SET, epoch),
+            frame_path,
+            args.point_size,
+            limits=limits,
+            draw_pairs=args.draw_pairs,
+        )
+        frame_paths.append(frame_path)
+
+    gif_path = plots_dir / 'class_umap' / 'val_evolution.gif'
+    create_gif(frame_paths, gif_path, args.gif_duration)
+
+
 def visualize_val_cosine_similarity_hist(loaded, plots_dir, args):
     hist_plot_dir = plots_dir / 'cosine_similarity_hist' / 'val'
     hist_plot_dir.mkdir(parents=True, exist_ok=True)
@@ -509,6 +561,8 @@ def visualize_val(embeddings_dir, plots_dir, args):
 
     if 'umap' in args.visualizations:
         visualize_val_umap(loaded, plots_dir, args)
+    if 'class_umap' in args.visualizations:
+        visualize_val_class_umap(loaded, plots_dir, args)
     if 'cosine_similarity_hist' in args.visualizations:
         visualize_val_cosine_similarity_hist(loaded, plots_dir, args)
 
