@@ -20,6 +20,7 @@ try:
         plot_class_metric_outputs,
     )
     from embedding_metrics import METRICS
+    from retrieval_metrics import compute_semantic_retrieval_metrics
 except ImportError:
     from analysis.broad_class_labels import (
         assign_broad_classes,
@@ -31,6 +32,7 @@ except ImportError:
         plot_class_metric_outputs,
     )
     from analysis.embedding_metrics import METRICS
+    from analysis.retrieval_metrics import compute_semantic_retrieval_metrics
 
 
 EPOCH_PATTERN = re.compile(r'epoch_(\d+)\.npz$')
@@ -169,6 +171,11 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
             continue
 
         print_broad_class_summary(VAL_BROAD_CLASS_SET, epoch, diagnostics)
+        row.update(compute_semantic_retrieval_metrics(
+            image_emb,
+            audio_emb,
+            labels,
+        ))
         current_class_rows, value_sets = compute_class_metrics(
             VAL_BROAD_CLASS_SET,
             epoch,
@@ -278,6 +285,11 @@ def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
                 continue
 
             print_broad_class_summary(current_test_set, epoch, diagnostics)
+            row.update(compute_semantic_retrieval_metrics(
+                image_emb,
+                audio_emb,
+                labels,
+            ))
             current_class_rows, value_sets = compute_class_metrics(
                 current_test_set,
                 epoch,
@@ -351,8 +363,23 @@ def plot_val_metrics(rows, plots_dir):
     plots_dir.mkdir(parents=True, exist_ok=True)
     epochs = [row['epoch'] for row in rows]
 
-    for metric_name in METRICS.keys():
-        values = [row[metric_name] for row in rows]
+    metadata_keys = {
+        'epoch',
+        'num_samples',
+        'embedding_file',
+        'image_embedding',
+        'split',
+        'dataset',
+        'test_set',
+    }
+    metric_names = [
+        key for key in rows[0].keys()
+        if key not in metadata_keys
+        and isinstance(rows[0][key], (int, float, np.integer, np.floating))
+    ]
+
+    for metric_name in metric_names:
+        values = [row.get(metric_name, float('nan')) for row in rows]
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(epochs, values, marker='o', linewidth=1.5)
         ax.set_xlabel('Epoch')
