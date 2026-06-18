@@ -20,7 +20,10 @@ try:
         plot_class_metric_outputs,
     )
     from embedding_metrics import METRICS
-    from retrieval_metrics import compute_semantic_retrieval_metrics
+    from retrieval_metrics import (
+        compute_instance_retrieval_metrics,
+        compute_semantic_retrieval_metrics,
+    )
 except ImportError:
     from analysis.broad_class_labels import (
         assign_broad_classes,
@@ -32,10 +35,14 @@ except ImportError:
         plot_class_metric_outputs,
     )
     from analysis.embedding_metrics import METRICS
-    from analysis.retrieval_metrics import compute_semantic_retrieval_metrics
+    from analysis.retrieval_metrics import (
+        compute_instance_retrieval_metrics,
+        compute_semantic_retrieval_metrics,
+    )
 
 
 EPOCH_PATTERN = re.compile(r'epoch_(\d+)\.npz$')
+AVSBENCH_FRAME_PATTERN = re.compile(r'(.+)__frame_(\d+)$')
 IMAGE_EMBEDDING_KEYS = {
     'positive_mask_mean': 'image_emb_positive_mask_mean',
     'maxpool': 'image_emb',
@@ -140,6 +147,37 @@ def compute_metrics(path, names=None, image_emb=None, audio_emb=None,
     return row
 
 
+def reduce_avsbench_for_retrieval(names, image_emb, audio_emb, labels):
+    grouped = {}
+    passthrough_indices = []
+    for idx, name in enumerate(names):
+        match = AVSBENCH_FRAME_PATTERN.match(str(name))
+        if match is None:
+            passthrough_indices.append(idx)
+            continue
+
+        uid = match.group(1)
+        frame_idx = int(match.group(2))
+        grouped.setdefault(uid, []).append((frame_idx, idx))
+
+    selected_indices = list(passthrough_indices)
+    for uid in sorted(grouped):
+        frame_indices = sorted(grouped[uid])
+        frame_to_idx = {frame_idx: idx for frame_idx, idx in frame_indices}
+        if 2 in frame_to_idx:
+            selected_indices.append(frame_to_idx[2])
+        else:
+            selected_indices.append(frame_indices[len(frame_indices) // 2][1])
+
+    selected_indices = np.asarray(sorted(selected_indices), dtype=int)
+    return (
+        names[selected_indices],
+        image_emb[selected_indices],
+        audio_emb[selected_indices],
+        np.asarray(labels)[selected_indices],
+    )
+
+
 def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
                 class_retrieval_top_k, image_embedding):
     val_dir = embeddings_dir / 'val'
@@ -175,6 +213,10 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
             image_emb,
             audio_emb,
             labels,
+        ))
+        row.update(compute_instance_retrieval_metrics(
+            image_emb,
+            audio_emb,
         ))
         current_class_rows, value_sets = compute_class_metrics(
             VAL_BROAD_CLASS_SET,
@@ -285,10 +327,30 @@ def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
                 continue
 
             print_broad_class_summary(current_test_set, epoch, diagnostics)
+            retrieval_image_emb = image_emb
+            retrieval_audio_emb = audio_emb
+            retrieval_labels = labels
+            if current_test_set == 'AVSBench':
+                (
+                    _retrieval_names,
+                    retrieval_image_emb,
+                    retrieval_audio_emb,
+                    retrieval_labels,
+                ) = reduce_avsbench_for_retrieval(
+                    names, image_emb, audio_emb, labels)
+                print(
+                    'Reduced AVSBench retrieval set for epoch {:04d}: '
+                    '{}/{} samples'
+                    .format(epoch, len(_retrieval_names), len(names)))
+
             row.update(compute_semantic_retrieval_metrics(
-                image_emb,
-                audio_emb,
-                labels,
+                retrieval_image_emb,
+                retrieval_audio_emb,
+                retrieval_labels,
+            ))
+            row.update(compute_instance_retrieval_metrics(
+                retrieval_image_emb,
+                retrieval_audio_emb,
             ))
             current_class_rows, value_sets = compute_class_metrics(
                 current_test_set,
