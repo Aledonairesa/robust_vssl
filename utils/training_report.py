@@ -16,6 +16,20 @@ FIELDNAMES = [
     'train_loss_cl',
     'train_loss_cl_ts',
     'train_loss_ts',
+    'train_loss_atp',
+    'train_loss_atp_ts',
+    'train_loss_cu',
+    'train_loss_cu_ts',
+    'train_loss_cl_weighted',
+    'train_loss_cl_ts_weighted',
+    'train_loss_ts_weighted',
+    'train_loss_atp_weighted',
+    'train_loss_cu_weighted',
+    'train_loss_cl_weight',
+    'train_loss_cl_ts_weight',
+    'train_loss_ts_weight',
+    'train_loss_atp_weight',
+    'train_loss_cu_weight',
     'train_top1_i2a',
     'train_top5_i2a',
     'train_top1_a2i',
@@ -47,16 +61,6 @@ FIELDNAMES = [
 
 
 DASHBOARD_PLOTS = [
-    (
-        'Losses',
-        [
-            ('train_loss', 'Train total'),
-            ('train_loss_cl', 'Train contrastive'),
-            ('train_loss_cl_ts', 'Train transformed contrastive'),
-            ('train_loss_ts', 'Train equivariance'),
-            ('val_loss', 'Validation'),
-        ],
-    ),
     (
         'Validation Retrieval Accuracy',
         [
@@ -98,6 +102,79 @@ DASHBOARD_PLOTS = [
             ('val_epoch_seconds', 'Validation'),
         ],
     ),
+]
+
+
+LOSS_DASHBOARD_PLOTS = [
+    {
+        'title': 'Total Loss',
+        'series': [
+            {'field': 'train_loss', 'label': 'Train total'},
+            {'field': 'val_loss', 'label': 'Validation'},
+        ],
+    },
+    {
+        'title': 'Train Contrastive Loss',
+        'series': [
+            {
+                'field': 'train_loss_cl_weighted',
+                'fallback_field': 'train_loss_cl',
+                'weight_field': 'train_loss_cl_weight',
+                'default_weight': 0.5,
+                'label': 'Train contrastive',
+            },
+        ],
+    },
+    {
+        'title': 'Train Transformed Contrastive Loss',
+        'series': [
+            {
+                'field': 'train_loss_cl_ts_weighted',
+                'fallback_field': 'train_loss_cl_ts',
+                'weight_field': 'train_loss_cl_ts_weight',
+                'default_weight': 0.5,
+                'label': 'Train transformed contrastive',
+            },
+        ],
+    },
+    {
+        'title': 'Train Equivariance Loss',
+        'series': [
+            {
+                'field': 'train_loss_ts_weighted',
+                'fallback_field': 'train_loss_ts',
+                'weight_field': 'train_loss_ts_weight',
+                'default_weight': 1.0,
+                'label': 'Train equivariance',
+            },
+        ],
+    },
+    {
+        'title': 'Train ATP Loss',
+        'optional': True,
+        'activation_weight_field': 'train_loss_atp_weight',
+        'series': [
+            {
+                'field': 'train_loss_atp_weighted',
+                'weight_field': 'train_loss_atp_weight',
+                'default_weight': 0.0,
+                'label': 'Train ATP',
+            },
+        ],
+    },
+    {
+        'title': 'Train CU Loss',
+        'optional': True,
+        'activation_weight_field': 'train_loss_cu_weight',
+        'series': [
+            {
+                'field': 'train_loss_cu_weighted',
+                'weight_field': 'train_loss_cu_weight',
+                'default_weight': 0.0,
+                'label': 'Train CU',
+            },
+        ],
+    },
 ]
 
 
@@ -158,16 +235,23 @@ def _write_csv_atomic(csv_path, rows):
 
 
 def _write_dashboard_atomic(dashboard_path, rows):
-    fig, axes = plt.subplots(3, 2, figsize=(14, 14))
+    plot_specs = _dashboard_plot_specs(rows)
+    num_cols = 2
+    num_rows = int(math.ceil(len(plot_specs) / num_cols))
+    fig, axes = plt.subplots(
+        num_rows, num_cols, figsize=(14, max(4, 4 * num_rows)))
+    if hasattr(axes, 'flat'):
+        axes_flat = list(axes.flat)
+    else:
+        axes_flat = [axes]
     epochs = [int(row['epoch']) for row in rows]
 
-    for ax, (title, series) in zip(axes.flat, DASHBOARD_PLOTS):
+    for ax, plot_spec in zip(axes_flat, plot_specs):
+        title = plot_spec['title']
+        series = plot_spec['series']
         plotted = False
-        for field, label in series:
-            points = [
-                (epoch, _parse_float(row.get(field)))
-                for epoch, row in zip(epochs, rows)
-            ]
+        for series_spec in series:
+            points = _series_points(rows, epochs, series_spec)
             points = [(epoch, value) for epoch, value in points
                       if value is not None]
             if points:
@@ -177,7 +261,7 @@ def _write_dashboard_atomic(dashboard_path, rows):
                     marker='o',
                     linewidth=1.5,
                     markersize=3,
-                    label=label,
+                    label=_series_label(rows, series_spec),
                 )
                 plotted = True
         ax.set_title(title)
@@ -189,6 +273,9 @@ def _write_dashboard_atomic(dashboard_path, rows):
             ax.text(
                 0.5, 0.5, 'No data yet', ha='center', va='center',
                 transform=ax.transAxes)
+
+    for ax in axes_flat[len(plot_specs):]:
+        ax.axis('off')
 
     fig.tight_layout()
     temp_path = None
@@ -233,3 +320,85 @@ def _parse_float(value):
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _dashboard_plot_specs(rows):
+    loss_plots = []
+    for plot_spec in LOSS_DASHBOARD_PLOTS:
+        if plot_spec.get('optional') and not _optional_plot_active(
+                rows, plot_spec):
+            continue
+        loss_plots.append(plot_spec)
+
+    base_plots = [
+        {
+            'title': title,
+            'series': [
+                {'field': field, 'label': label}
+                for field, label in series
+            ],
+        }
+        for title, series in DASHBOARD_PLOTS
+    ]
+    return loss_plots + base_plots
+
+
+def _optional_plot_active(rows, plot_spec):
+    weight_field = plot_spec.get('activation_weight_field')
+    if weight_field is not None:
+        for row in rows:
+            weight = _parse_float(row.get(weight_field))
+            if weight is not None and weight > 0:
+                return True
+
+    for series_spec in plot_spec['series']:
+        for row in rows:
+            value = _series_value(row, series_spec)
+            if value is not None and abs(value) > 0:
+                return True
+    return False
+
+
+def _series_points(rows, epochs, series_spec):
+    return [
+        (epoch, _series_value(row, series_spec))
+        for epoch, row in zip(epochs, rows)
+    ]
+
+
+def _series_value(row, series_spec):
+    value = _parse_float(row.get(series_spec['field']))
+    if value is not None:
+        return value
+
+    fallback_field = series_spec.get('fallback_field')
+    if fallback_field is None:
+        return None
+
+    fallback_value = _parse_float(row.get(fallback_field))
+    if fallback_value is None:
+        return None
+    weight = _series_weight(row, series_spec)
+    return fallback_value * weight
+
+
+def _series_label(rows, series_spec):
+    label = series_spec['label']
+    if 'weight_field' not in series_spec:
+        return label
+
+    weight = None
+    for row in rows:
+        weight = _series_weight(row, series_spec)
+        if weight is not None:
+            break
+    if weight is None:
+        return label
+    return '{} ({:g})'.format(label, weight)
+
+
+def _series_weight(row, series_spec):
+    weight = _parse_float(row.get(series_spec.get('weight_field')))
+    if weight is not None:
+        return weight
+    return series_spec.get('default_weight')

@@ -131,7 +131,7 @@ def get_arguments():
     parser.add_argument('--rescale_prob', type=float, default= 0.8, help='rescale probility')
 
     parser.add_argument('--equi_loss_type', type=str, default='mse', help='Loss type: l1loss: "l1loss"| mae | l2 loss: "mse" ')
-    parser.add_argument('--max_rotation_angle', type=float, default=45)
+    parser.add_argument('--max_rotation_angle', type=float, default=30)
     parser.add_argument('--biCLLoss', action='store_true', default=False)
     parser.add_argument('--heatmap_no_grad', action='store_true', default=False)
     parser.add_argument('--audio_extract_batch_size', type=int, default=256, help='batch size for extract audio embeddings ')

@@ -440,6 +440,18 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         'loss_atp_ts': losses_atp_ts.avg,
         'loss_cu': losses_cu.avg,
         'loss_cu_ts': losses_cu_ts.avg,
+        'loss_cl_weighted': 0.5 * losses_cl.avg,
+        'loss_cl_ts_weighted': 0.5 * losses_cl_ts.avg,
+        'loss_ts_weighted': lambda_trans_equiv * losses_ts.avg,
+        'loss_atp_weighted': (
+            lambda_atp * 0.5 * (losses_atp.avg + losses_atp_ts.avg)),
+        'loss_cu_weighted': (
+            lambda_cu * 0.5 * (losses_cu.avg + losses_cu_ts.avg)),
+        'loss_cl_weight': 0.5,
+        'loss_cl_ts_weight': 0.5,
+        'loss_ts_weight': lambda_trans_equiv,
+        'loss_atp_weight': lambda_atp,
+        'loss_cu_weight': lambda_cu,
         'top1_i2a': top1_meter_i2a.avg,
         'top5_i2a': top5_meter_i2a.avg,
         'top1_a2i': top1_meter_a2i.avg,
