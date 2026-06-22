@@ -8,7 +8,7 @@ except ImportError:
 
 PRECISION_K = (5, 10)
 ACCURACY_K = (1, 5, 10)
-INSTANCE_RECALL_K = (1,)
+INSTANCE_ACCURACY_K = (1, 5, 10)
 
 
 def _empty_direction_metrics(direction, precision_k, accuracy_k):
@@ -127,45 +127,45 @@ def compute_semantic_retrieval_metrics(image_emb, audio_emb, labels,
     return metrics
 
 
-def _instance_direction_metrics(query_emb, target_emb, direction, recall_k):
+def _instance_direction_metrics(query_emb, target_emb, direction, accuracy_k):
     query_emb = np.asarray(query_emb)
     target_emb = np.asarray(target_emb)
     num_queries = query_emb.shape[0]
     num_targets = target_emb.shape[0]
     if num_queries == 0 or num_queries != num_targets:
         return {
-            'instance_{}_recall_at_{}'.format(direction, k): float('nan')
-            for k in recall_k
+            'instance_{}_accuracy_at_{}'.format(direction, k): float('nan')
+            for k in accuracy_k
         }
 
     similarities = query_emb @ target_emb.T
     ranking = np.argsort(-similarities, axis=1)
     target_indices = np.arange(num_queries)
     metrics = {}
-    for k in recall_k:
+    for k in accuracy_k:
         effective_k = min(k, num_targets)
         hits = np.any(
             ranking[:, :effective_k] == target_indices[:, None],
             axis=1,
         )
-        metrics['instance_{}_recall_at_{}'.format(direction, k)] = (
+        metrics['instance_{}_accuracy_at_{}'.format(direction, k)] = (
             float(np.mean(hits)))
     return metrics
 
 
 def compute_instance_retrieval_metrics(image_emb, audio_emb,
-                                       recall_k=INSTANCE_RECALL_K):
+                                       accuracy_k=INSTANCE_ACCURACY_K):
     metrics = {}
     metrics.update(_instance_direction_metrics(
         image_emb,
         audio_emb,
         'i2a',
-        recall_k,
+        accuracy_k,
     ))
     metrics.update(_instance_direction_metrics(
         audio_emb,
         image_emb,
         'a2i',
-        recall_k,
+        accuracy_k,
     ))
     return metrics
