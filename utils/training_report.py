@@ -60,6 +60,24 @@ FIELDNAMES = [
 ]
 
 
+TEST_FIELDNAMES = [
+    'epoch',
+    'test_set',
+    'test_set_scale',
+    'checkpoint_path',
+    'num_samples',
+    'loss',
+    'top1_i2a',
+    'top5_i2a',
+    'top1_a2i',
+    'top5_a2i',
+    'mean_ciou',
+    'auc',
+    'has_annotations',
+    'test_seconds',
+]
+
+
 DASHBOARD_PLOTS = [
     (
         'Validation Retrieval Accuracy',
@@ -180,8 +198,8 @@ LOSS_DASHBOARD_PLOTS = [
 
 def record_epoch(metrics_dir, row):
     os.makedirs(metrics_dir, exist_ok=True)
-    csv_path = os.path.join(metrics_dir, 'epochs.csv')
-    rows = _read_rows(csv_path)
+    csv_path = os.path.join(metrics_dir, 'training_epochs.csv')
+    rows = _read_rows(csv_path, FIELDNAMES)
     normalized_row = {
         field: _serialize_value(row.get(field))
         for field in FIELDNAMES
@@ -191,20 +209,53 @@ def record_epoch(metrics_dir, row):
     rows_by_epoch[int(normalized_row['epoch'])] = normalized_row
     rows = [rows_by_epoch[epoch] for epoch in sorted(rows_by_epoch)]
 
-    _write_csv_atomic(csv_path, rows)
+    _write_csv_atomic(csv_path, rows, FIELDNAMES, '.training-epochs-')
     _write_dashboard_atomic(
         os.path.join(metrics_dir, 'training_dashboard.png'), rows)
     _write_latest_metrics_atomic(
         os.path.join(metrics_dir, 'latest_metrics.txt'), rows[-1])
 
 
-def _read_rows(csv_path):
+def record_test_result(metrics_dir, row):
+    os.makedirs(metrics_dir, exist_ok=True)
+    csv_path = os.path.join(metrics_dir, 'test_metrics.csv')
+    rows = _read_rows(csv_path, TEST_FIELDNAMES)
+    normalized_row = {
+        field: _serialize_value(row.get(field))
+        for field in TEST_FIELDNAMES
+    }
+    normalized_row['epoch'] = str(int(row['epoch']))
+
+    def row_key(current_row):
+        return (
+            current_row['test_set'],
+            current_row['test_set_scale'],
+            int(current_row['epoch']),
+            current_row['checkpoint_path'],
+        )
+
+    rows_by_key = {row_key(existing): existing for existing in rows}
+    rows_by_key[row_key(normalized_row)] = normalized_row
+    rows = sorted(
+        rows_by_key.values(),
+        key=lambda current_row: (
+            int(current_row['epoch']),
+            current_row['test_set'],
+            current_row['test_set_scale'],
+            current_row['checkpoint_path'],
+        ),
+    )
+    _write_csv_atomic(
+        csv_path, rows, TEST_FIELDNAMES, '.test-metrics-')
+
+
+def _read_rows(csv_path, fieldnames):
     if not os.path.exists(csv_path):
         return []
     with open(csv_path, 'r', newline='') as csv_file:
         reader = csv.DictReader(csv_file)
         return [
-            {field: row.get(field, '') for field in FIELDNAMES}
+            {field: row.get(field, '') for field in fieldnames}
             for row in reader
             if row.get('epoch')
         ]
@@ -218,14 +269,14 @@ def _serialize_value(value):
     return str(value)
 
 
-def _write_csv_atomic(csv_path, rows):
+def _write_csv_atomic(csv_path, rows, fieldnames, prefix):
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile(
                 'w', newline='', delete=False, dir=os.path.dirname(csv_path),
-                prefix='.epochs-', suffix='.tmp') as csv_file:
+                prefix=prefix, suffix='.tmp') as csv_file:
             temp_path = csv_file.name
-            writer = csv.DictWriter(csv_file, fieldnames=FIELDNAMES)
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
         os.replace(temp_path, csv_path)

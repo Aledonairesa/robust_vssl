@@ -26,7 +26,7 @@ from tqdm import tqdm
 from utils.util import vis_heatmap_bbox, tensor2img
 from utils.tf_equivariance_loss import TfEquivarianceLoss
 import utils.tensorboard_utils as TB
-from utils.training_report import record_epoch
+from utils.training_report import record_epoch, record_test_result
 from utils.utils import save_checkpoint, AverageMeter, calc_topk_accuracy, Logger, ProgressMeter, neq_load_customized
 
 
@@ -579,6 +579,7 @@ def validate(val_loader, model, criterion, device, epoch, args):
 
 
 def test(test_loader, model, criterion, device, epoch, args):
+    tic = time.time()
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1_meter_i2a = AverageMeter('acc@1_i2a', ':.4f')
@@ -670,29 +671,50 @@ def test(test_loader, model, criterion, device, epoch, args):
                             contour_mask=contour_mask,
                             img_size=args.image_size)
             
-    mean_ciou = np.sum(np.array(val_ious_meter) >= 0.5)/ len(val_ious_meter)
-    auc_val = cal_auc(val_ious_meter)
+    mean_ciou = None
+    auc_val = None
+    if val_ious_meter:
+        mean_ciou = (
+            np.sum(np.array(val_ious_meter) >= 0.5) / len(val_ious_meter))
+        auc_val = cal_auc(val_ious_meter)
 
-    print('Test: \t Epoch: [{0}]\t'
-          'Loss: {loss.avg:.4f} Acc@1_i2a: {top1_i2a.avg:.4f} Acc@5_i2a: {top5_i2a.avg:.4f} '
-          'Acc@1_a2i: {top1_a2i.avg:.4f} Acc@5_a2i: {top5_a2i.avg:.4f} MeancIoU: {ciouAvg:.4f} AUC: {auc:.4f}\t'
-          .format(epoch, loss=losses, top1_i2a=top1_meter_i2a, top5_i2a=top5_meter_i2a,
-                  top1_a2i=top1_meter_a2i, top5_a2i=top5_meter_a2i,
-                  ciouAvg=mean_ciou, auc=auc_val))
-
-    args.test_logger.log('Test Epoch: [{0}]\t'
-                    'Loss: {loss.avg:.4f} Acc@1_i2a: {top1_i2a.avg:.4f} Acc@5_i2a: {top5_i2a.avg:.4f} '
-                    'Acc@1_a2i: {top1_a2i.avg:.4f} Acc@5_a2i: {top5_a2i.avg:.4f} MeancIoU: {ciouAvg:.4f} AUC:{auc:.4f} \t'
-                    .format(epoch, loss=losses, top1_i2a=top1_meter_i2a, top5_i2a=top5_meter_i2a,
-                            top1_a2i=top1_meter_a2i, top5_a2i=top5_meter_a2i,
-                            ciouAvg=mean_ciou, auc=auc_val))
+    msg = (
+        'Test: \t Epoch: [{0}]\t Loss: {loss.avg:.4f} '
+        'Acc@1_i2a: {top1_i2a.avg:.4f} '
+        'Acc@5_i2a: {top5_i2a.avg:.4f} '
+        'Acc@1_a2i: {top1_a2i.avg:.4f} '
+        'Acc@5_a2i: {top5_a2i.avg:.4f}'
+        .format(
+            epoch,
+            loss=losses,
+            top1_i2a=top1_meter_i2a,
+            top5_i2a=top5_meter_i2a,
+            top1_a2i=top1_meter_a2i,
+            top5_a2i=top5_meter_a2i,
+        ))
+    if mean_ciou is not None:
+        msg += ' MeancIoU: {:.4f} AUC: {:.4f}'.format(
+            mean_ciou, auc_val)
+    print(msg)
+    args.test_logger.log(msg)
 
     if args.save_test_embeddings:
         save_embeddings(
             args.exp_path, 'test', epoch, sample_names, embedding_batches,
             subset=args.test_set)
 
-    sys.exit(0)
+    return {
+        'num_samples': losses.count,
+        'loss': losses.avg,
+        'top1_i2a': top1_meter_i2a.avg,
+        'top5_i2a': top5_meter_i2a.avg,
+        'top1_a2i': top1_meter_a2i.avg,
+        'top5_a2i': top5_meter_a2i.avg,
+        'mean_ciou': mean_ciou,
+        'auc': auc_val,
+        'has_annotations': int(has_annotations),
+        'test_seconds': time.time() - tic,
+    }
 
 
 def main(args):
@@ -780,7 +802,19 @@ def main(args):
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,\
             num_workers=args.n_threads, pin_memory=True)
         
-        test(test_loader, model, criterion, device, epoch, args)
+        test_metrics = test(
+            test_loader, model, criterion, device, epoch, args)
+        record_test_result(
+            args.metrics_path,
+            {
+                'epoch': epoch,
+                'test_set': args.test_set,
+                'test_set_scale': args.test_set_scale,
+                'checkpoint_path': os.path.abspath(args.test),
+                **test_metrics,
+            },
+        )
+        return
         
     train_dataset = GetAudioVideoDataset(args, mode='train')
     val_dataset = GetAudioVideoDataset(args, mode='val')
