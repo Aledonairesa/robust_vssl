@@ -217,6 +217,8 @@ def record_epoch_report(args, epoch, optim, train_metrics, val_metrics,
     if val_metrics is not None:
         for key in [
                 'loss',
+                'loss_weighted',
+                'loss_weight',
                 'top1_i2a',
                 'top5_i2a',
                 'top1_a2i',
@@ -567,6 +569,8 @@ def validate(val_loader, model, criterion, device, epoch, args):
 
     return {
         'loss': losses.avg,
+        'loss_weighted': 0.5 * losses.avg,
+        'loss_weight': 0.5,
         'top1_i2a': top1_meter_i2a.avg,
         'top5_i2a': top5_meter_i2a.avg,
         'top1_a2i': top1_meter_a2i.avg,

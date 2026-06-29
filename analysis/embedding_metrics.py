@@ -23,6 +23,53 @@ def _cosine_dissimilarity_matrix(left_emb, right_emb):
     return (1 - (left_emb @ right_emb.T)) / 2
 
 
+def _nearest_neighbor_overlap(image_emb, audio_emb, k):
+    image_emb = np.asarray(image_emb)
+    audio_emb = np.asarray(audio_emb)
+    num_images = image_emb.shape[0]
+    num_audio = audio_emb.shape[0]
+    if num_images == 0 or num_audio == 0:
+        return float('nan')
+
+    combined = np.concatenate([image_emb, audio_emb], axis=0)
+    num_total = combined.shape[0]
+    if num_total < 2:
+        return float('nan')
+
+    effective_k = min(k, num_total - 1)
+    if effective_k <= 0:
+        return float('nan')
+
+    modality_labels = np.concatenate([
+        np.zeros(num_images, dtype=int),
+        np.ones(num_audio, dtype=int),
+    ])
+    similarities = combined @ combined.T
+    np.fill_diagonal(similarities, -np.inf)
+
+    neighbor_indices = np.argpartition(
+        -similarities,
+        kth=effective_k - 1,
+        axis=1,
+    )[:, :effective_k]
+    neighbor_labels = modality_labels[neighbor_indices]
+
+    image_neighbor_overlap = np.mean(
+        neighbor_labels[:num_images] == 1,
+        axis=1,
+    )
+    audio_neighbor_overlap = np.mean(
+        neighbor_labels[num_images:] == 0,
+        axis=1,
+    )
+    return float(
+        0.5 * (
+            image_neighbor_overlap.mean()
+            + audio_neighbor_overlap.mean()
+        )
+    )
+
+
 def centroid_distance(image_emb, audio_emb):
     image_centroid, audio_centroid = _centroids(image_emb, audio_emb)
     return float(np.linalg.norm(image_centroid - audio_centroid))
@@ -88,6 +135,18 @@ def relative_modality_gap(image_emb, audio_emb):
     return float(paired_gap / denominator)
 
 
+def nn_overlap_at_1(image_emb, audio_emb):
+    return _nearest_neighbor_overlap(image_emb, audio_emb, 1)
+
+
+def nn_overlap_at_5(image_emb, audio_emb):
+    return _nearest_neighbor_overlap(image_emb, audio_emb, 5)
+
+
+def nn_overlap_at_10(image_emb, audio_emb):
+    return _nearest_neighbor_overlap(image_emb, audio_emb, 10)
+
+
 METRICS = {
     'centroid_distance': centroid_distance,
     'centroid_cosine_similarity': centroid_cosine_similarity,
@@ -97,4 +156,7 @@ METRICS = {
     'image_intra_spread': image_intra_spread,
     'audio_intra_spread': audio_intra_spread,
     'relative_modality_gap': relative_modality_gap,
+    'nn_overlap_at_1': nn_overlap_at_1,
+    'nn_overlap_at_5': nn_overlap_at_5,
+    'nn_overlap_at_10': nn_overlap_at_10,
 }

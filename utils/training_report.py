@@ -44,6 +44,8 @@ FIELDNAMES = [
     'train_epoch_seconds',
     'validation_ran',
     'val_loss',
+    'val_loss_weighted',
+    'val_loss_weight',
     'val_top1_i2a',
     'val_top5_i2a',
     'val_top1_a2i',
@@ -125,14 +127,13 @@ DASHBOARD_PLOTS = [
 
 LOSS_DASHBOARD_PLOTS = [
     {
-        'title': 'Total Loss',
+        'title': 'Train Total Loss',
         'series': [
             {'field': 'train_loss', 'label': 'Train total'},
-            {'field': 'val_loss', 'label': 'Validation'},
         ],
     },
     {
-        'title': 'Train Contrastive Loss',
+        'title': 'Contrastive Loss',
         'series': [
             {
                 'field': 'train_loss_cl_weighted',
@@ -140,6 +141,13 @@ LOSS_DASHBOARD_PLOTS = [
                 'weight_field': 'train_loss_cl_weight',
                 'default_weight': 0.5,
                 'label': 'Train contrastive',
+            },
+            {
+                'field': 'val_loss_weighted',
+                'fallback_field': 'val_loss',
+                'weight_field': 'val_loss_weight',
+                'default_weight': 0.5,
+                'label': 'Validation contrastive',
             },
         ],
     },
