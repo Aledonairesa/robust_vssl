@@ -26,6 +26,9 @@ class AVENet(nn.Module):
         self.epsilon = args.epsilon
         self.epsilon2 = args.epsilon2
         self.tau = 0.03
+        self.temperature = args.temperature
+        if self.temperature <= 0:
+            raise ValueError('temperature must be positive')
         self.Neg = args.Neg
 
         # Image backbone
@@ -182,9 +185,13 @@ class AVENet(nn.Module):
         sim_neg_hard = (neg * S_diag).view(*S_diag.shape[:2],-1).sum(-1) / neg.view(*neg.shape[:2],-1).sum(-1)                                               # Hard negative Bx1
 
         if self.Neg:
-            logits = torch.cat((sim_pos,sim_neg_easy,sim_neg_hard),1)/0.07
+            logits = torch.cat(
+                (sim_pos, sim_neg_easy, sim_neg_hard), 1
+            ) / self.temperature
         else:
-            logits = torch.cat((sim_pos,sim_neg_easy),1)/0.07 # 0.07 is temperature
+            logits = torch.cat(
+                (sim_pos, sim_neg_easy), 1
+            ) / self.temperature
 
         if return_embeddings:
             img_emb = self.maxpool(img_feat).view(B, -1)
