@@ -26,9 +26,15 @@ class AVENet(nn.Module):
         self.epsilon = args.epsilon
         self.epsilon2 = args.epsilon2
         self.tau = 0.03
-        self.temperature = args.temperature
+        self.temperature = float(args.temperature)
         if self.temperature <= 0:
             raise ValueError('temperature must be positive')
+        self.learnable_temperature = args.learnable_temperature
+        if self.learnable_temperature:
+            self.temperature_v = nn.Parameter(torch.tensor(
+                -math.log(self.temperature), dtype=torch.float32))
+        else:
+            self.register_parameter('temperature_v', None)
         self.Neg = args.Neg
 
         # Image backbone
@@ -184,14 +190,15 @@ class AVENet(nn.Module):
         sim_neg_easy = ((mask_pos_cross * S_cross).view(*S_cross.shape[:2],-1).sum(-1) / mask_pos_cross.view(*mask_pos_cross.shape[:2],-1).sum(-1) ) * mask  # Easy negative BxB
         sim_neg_hard = (neg * S_diag).view(*S_diag.shape[:2],-1).sum(-1) / neg.view(*neg.shape[:2],-1).sum(-1)                                               # Hard negative Bx1
 
+        temperature = self.current_temperature()
         if self.Neg:
             logits = torch.cat(
                 (sim_pos, sim_neg_easy, sim_neg_hard), 1
-            ) / self.temperature
+            ) / temperature
         else:
             logits = torch.cat(
                 (sim_pos, sim_neg_easy), 1
-            ) / self.temperature
+            ) / temperature
 
         if return_embeddings:
             img_emb = self.maxpool(img_feat).view(B, -1)
@@ -208,3 +215,8 @@ class AVENet(nn.Module):
             return S_diag, logits, mask_pos, neg, S_cross_pooled, embeddings
 
         return S_diag, logits, mask_pos, neg, S_cross_pooled
+
+    def current_temperature(self):
+        if self.temperature_v is not None:
+            return torch.exp(-self.temperature_v)
+        return self.temperature

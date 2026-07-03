@@ -114,6 +114,19 @@ def build_criterion(args):
     raise ValueError('Unknown contrastive loss: {}'.format(args.cl_loss))
 
 
+def get_temperature_metrics(model):
+    model_without_dp = model.module if isinstance(
+        model, torch.nn.DataParallel) else model
+    temperature = model_without_dp.current_temperature()
+    if torch.is_tensor(temperature):
+        temperature = temperature.detach().item()
+
+    metrics = {'temperature': float(temperature)}
+    if model_without_dp.temperature_v is not None:
+        metrics['temperature_v'] = model_without_dp.temperature_v.detach().item()
+    return metrics
+
+
 def normalize_img(value, vmax=None, vmin=None):
     vmin = value.min() if vmin is None else vmin
     vmax = value.max() if vmax is None else vmax
@@ -416,6 +429,15 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
             'sigmoid_b': criterion.b.item(),
         }
 
+    temperature_metrics = get_temperature_metrics(model)
+    if 'temperature_v' in temperature_metrics:
+        print(
+            'Temperature params: v={:.6f} T=exp(-v)={:.6f}'.format(
+                temperature_metrics['temperature_v'],
+                temperature_metrics['temperature'],
+            )
+        )
+
     args.train_plotter.add_data('global/loss', losses.avg, epoch)
     args.train_plotter.add_data('global/loss_cl', losses_cl.avg, epoch)
     args.train_plotter.add_data('global/loss_cl_ts', losses_cl_ts.avg, epoch)
@@ -432,6 +454,14 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     args.train_plotter.add_data('global/top5_ts_i2a', top5_meter_ts_i2a.avg, epoch)
     args.train_plotter.add_data('global/top1_ts_a2i', top1_meter_ts_a2i.avg, epoch)
     args.train_plotter.add_data('global/top5_ts_a2i', top5_meter_ts_a2i.avg, epoch)
+    args.train_plotter.add_data(
+        'global/temperature', temperature_metrics['temperature'], epoch)
+    if 'temperature_v' in temperature_metrics:
+        args.train_plotter.add_data(
+            'global/temperature_v',
+            temperature_metrics['temperature_v'],
+            epoch,
+        )
 
     return {
         'loss': losses.avg,
@@ -463,6 +493,7 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         'top1_ts_a2i': top1_meter_ts_a2i.avg,
         'top5_ts_a2i': top5_meter_ts_a2i.avg,
         'epoch_seconds': epoch_seconds,
+        **temperature_metrics,
         **sigmoid_metrics,
     }
 
@@ -732,6 +763,12 @@ def main(args):
         raise ValueError('lambda_cu must be non-negative')
     if args.atp_cu_start_epoch < 1:
         raise ValueError('atp_cu_start_epoch must be at least 1')
+    if args.temperature <= 0:
+        raise ValueError('temperature must be positive')
+    if args.learnable_temperature and args.cl_loss == 'sigmoid':
+        raise ValueError(
+            'learnable_temperature cannot be combined with cl_loss=sigmoid '
+            'because both introduce a learnable logit scale')
 
     # Set GPU IDs
     if args.gpus is None:
@@ -770,7 +807,29 @@ def main(args):
     criterion = build_criterion(args).to(device)
     trainable_params = list(filter(lambda p: p.requires_grad, model.parameters()))
     trainable_params += list(filter(lambda p: p.requires_grad, criterion.parameters()))
-    optim = Adam(trainable_params, lr=args.learning_rate, weight_decay=args.weight_decay)
+    if model_without_dp.temperature_v is not None:
+        temperature_param = model_without_dp.temperature_v
+        regular_params = [
+            param for param in trainable_params
+            if param is not temperature_param
+        ]
+        optimizer_params = [
+            {
+                'params': regular_params,
+                'weight_decay': args.weight_decay,
+            },
+            {
+                'params': [temperature_param],
+                'weight_decay': 0.0,
+            },
+        ]
+    else:
+        optimizer_params = trainable_params
+    optim = Adam(
+        optimizer_params,
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+    )
     scheduler = lr_scheduler.MultiStepLR(optim, milestones=[300,700,900], gamma=0.1)
     args.iteration = 1
     

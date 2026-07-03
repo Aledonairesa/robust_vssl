@@ -38,6 +38,8 @@ FIELDNAMES = [
     'train_top5_ts_i2a',
     'train_top1_ts_a2i',
     'train_top5_ts_a2i',
+    'train_temperature_v',
+    'train_temperature',
     'train_sigmoid_t',
     'train_sigmoid_scale',
     'train_sigmoid_b',

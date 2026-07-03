@@ -17,3 +17,5 @@ outputs/
 data/*
 
 analysis/broad_classes/
+
+analysis/extra_plots/
