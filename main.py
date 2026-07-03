@@ -114,7 +114,7 @@ def build_criterion(args):
     raise ValueError('Unknown contrastive loss: {}'.format(args.cl_loss))
 
 
-def get_temperature_metrics(model):
+def get_temperature_metrics(model, optim=None):
     model_without_dp = model.module if isinstance(
         model, torch.nn.DataParallel) else model
     temperature = model_without_dp.current_temperature()
@@ -124,6 +124,13 @@ def get_temperature_metrics(model):
     metrics = {'temperature': float(temperature)}
     if model_without_dp.temperature_v is not None:
         metrics['temperature_v'] = model_without_dp.temperature_v.detach().item()
+        if optim is not None:
+            for param_group in optim.param_groups:
+                if any(
+                        param is model_without_dp.temperature_v
+                        for param in param_group['params']):
+                    metrics['temperature_learning_rate'] = param_group['lr']
+                    break
     return metrics
 
 
@@ -429,7 +436,7 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
             'sigmoid_b': criterion.b.item(),
         }
 
-    temperature_metrics = get_temperature_metrics(model)
+    temperature_metrics = get_temperature_metrics(model, optim)
     if 'temperature_v' in temperature_metrics:
         print(
             'Temperature params: v={:.6f} T=exp(-v)={:.6f}'.format(
@@ -460,6 +467,11 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         args.train_plotter.add_data(
             'global/temperature_v',
             temperature_metrics['temperature_v'],
+            epoch,
+        )
+        args.train_plotter.add_data(
+            'global/temperature_learning_rate',
+            temperature_metrics['temperature_learning_rate'],
             epoch,
         )
 
@@ -765,6 +777,14 @@ def main(args):
         raise ValueError('atp_cu_start_epoch must be at least 1')
     if args.temperature <= 0:
         raise ValueError('temperature must be positive')
+    if args.temperature_lr_scale <= 0:
+        raise ValueError('temperature_lr_scale must be positive')
+    if (
+            not args.learnable_temperature
+            and args.temperature_lr_scale != 1.0):
+        raise ValueError(
+            'temperature_lr_scale requires learnable_temperature when it '
+            'differs from 1.0')
     if args.learnable_temperature and args.cl_loss == 'sigmoid':
         raise ValueError(
             'learnable_temperature cannot be combined with cl_loss=sigmoid '
@@ -820,6 +840,7 @@ def main(args):
             },
             {
                 'params': [temperature_param],
+                'lr': args.learning_rate * args.temperature_lr_scale,
                 'weight_decay': 0.0,
             },
         ]

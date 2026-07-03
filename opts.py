@@ -101,6 +101,10 @@ def get_arguments():
     parser.add_argument(
         '--learnable_temperature', action='store_true',
         help='Learn T(v)=exp(-v), initialized from --temperature')
+    parser.add_argument(
+        '--temperature_lr_scale', default=1.0, type=float,
+        help='Learning-rate multiplier for learnable temperature; use 0.1 '
+             'for a 10x lower temperature learning rate')
     
     parser.add_argument("--seed", default=4, type=int, help='Seed for torch and numpy initlization: 0 1 2 3 4 ')
     
