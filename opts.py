@@ -100,11 +100,16 @@ def get_arguments():
     parser.add_argument("--temperature", default=0.07, type=float, help='Temperature for logits, 0.02, 0.05, 0.07, 0.1')
     parser.add_argument(
         '--learnable_temperature', action='store_true',
-        help='Learn T(v)=exp(-v), initialized from --temperature')
+        help='Learn the temperature using --temperature_reparam, initialized '
+             'from --temperature')
     parser.add_argument(
         '--temperature_lr_scale', default=1.0, type=float,
         help='Learning-rate multiplier for learnable temperature; use 0.1 '
              'for a 10x lower temperature learning rate')
+    parser.add_argument(
+        '--temperature_reparam', choices=['exp', 'softplus'], default='exp',
+        help='Learnable inverse-temperature parameterization: exp(v) or '
+             'softplus(v)')
     
     parser.add_argument("--seed", default=4, type=int, help='Seed for torch and numpy initlization: 0 1 2 3 4 ')
     

@@ -118,10 +118,16 @@ def get_temperature_metrics(model, optim=None):
     model_without_dp = model.module if isinstance(
         model, torch.nn.DataParallel) else model
     temperature = model_without_dp.current_temperature()
+    inverse_temperature = model_without_dp.current_inverse_temperature()
     if torch.is_tensor(temperature):
         temperature = temperature.detach().item()
+    if torch.is_tensor(inverse_temperature):
+        inverse_temperature = inverse_temperature.detach().item()
 
-    metrics = {'temperature': float(temperature)}
+    metrics = {
+        'temperature': float(temperature),
+        'inverse_temperature': float(inverse_temperature),
+    }
     if model_without_dp.temperature_v is not None:
         metrics['temperature_v'] = model_without_dp.temperature_v.detach().item()
         if optim is not None:
@@ -132,6 +138,29 @@ def get_temperature_metrics(model, optim=None):
                     metrics['temperature_learning_rate'] = param_group['lr']
                     break
     return metrics
+
+
+def validate_temperature_checkpoint(checkpoint, args):
+    state_dict = checkpoint.get('state_dict', {})
+    has_temperature_v = any(
+        key == 'temperature_v' or key.endswith('.temperature_v')
+        for key in state_dict
+    )
+    if not has_temperature_v:
+        return
+
+    if not args.learnable_temperature:
+        raise ValueError(
+            'Checkpoint contains a learnable temperature. Add '
+            '--learnable_temperature and use its original '
+            '--temperature_reparam setting.')
+
+    checkpoint_reparam = checkpoint.get('temperature_reparam', 'exp')
+    if checkpoint_reparam != args.temperature_reparam:
+        raise ValueError(
+            'Temperature reparameterization mismatch: checkpoint uses {} '
+            'but current arguments use {}.'.format(
+                checkpoint_reparam, args.temperature_reparam))
 
 
 def normalize_img(value, vmax=None, vmin=None):
@@ -439,8 +468,10 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     temperature_metrics = get_temperature_metrics(model, optim)
     if 'temperature_v' in temperature_metrics:
         print(
-            'Temperature params: v={:.6f} T=exp(-v)={:.6f}'.format(
+            'Temperature params ({}): v={:.6f} 1/T={:.6f} T={:.6f}'.format(
+                args.temperature_reparam,
                 temperature_metrics['temperature_v'],
+                temperature_metrics['inverse_temperature'],
                 temperature_metrics['temperature'],
             )
         )
@@ -463,6 +494,11 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     args.train_plotter.add_data('global/top5_ts_a2i', top5_meter_ts_a2i.avg, epoch)
     args.train_plotter.add_data(
         'global/temperature', temperature_metrics['temperature'], epoch)
+    args.train_plotter.add_data(
+        'global/inverse_temperature',
+        temperature_metrics['inverse_temperature'],
+        epoch,
+    )
     if 'temperature_v' in temperature_metrics:
         args.train_plotter.add_data(
             'global/temperature_v',
@@ -785,6 +821,12 @@ def main(args):
         raise ValueError(
             'temperature_lr_scale requires learnable_temperature when it '
             'differs from 1.0')
+    if (
+            not args.learnable_temperature
+            and args.temperature_reparam != 'exp'):
+        raise ValueError(
+            'temperature_reparam={} requires learnable_temperature'.format(
+                args.temperature_reparam))
     if args.learnable_temperature and args.cl_loss == 'sigmoid':
         raise ValueError(
             'learnable_temperature cannot be combined with cl_loss=sigmoid '
@@ -858,6 +900,7 @@ def main(args):
         if os.path.isfile(args.test):
             print("=> loading testing checkpoint '{}'".format(args.test))
             checkpoint = torch.load(args.test, map_location=torch.device('cpu'))
+            validate_temperature_checkpoint(checkpoint, args)
             epoch = checkpoint['epoch']
             state_dict = checkpoint['state_dict']
             
@@ -911,6 +954,7 @@ def main(args):
     if args.resume:
         if os.path.isfile(args.resume):
             checkpoint = torch.load(args.resume, map_location='cpu')
+            validate_temperature_checkpoint(checkpoint, args)
             args.start_epoch = checkpoint['epoch']+ 1
             args.iteration = checkpoint['iteration']
             best_metric = checkpoint.get(
@@ -994,6 +1038,8 @@ def main(args):
             save_dict = {
                 'epoch': epoch,
                 'state_dict': state_dict,
+                'learnable_temperature': args.learnable_temperature,
+                'temperature_reparam': args.temperature_reparam,
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': checkpoint_metric,
@@ -1045,6 +1091,8 @@ def main(args):
             save_dict = {
                 'epoch': epoch,
                 'state_dict': state_dict,
+                'learnable_temperature': args.learnable_temperature,
+                'temperature_reparam': args.temperature_reparam,
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': args.checkpoint_metric,

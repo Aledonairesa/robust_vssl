@@ -30,9 +30,19 @@ class AVENet(nn.Module):
         if self.temperature <= 0:
             raise ValueError('temperature must be positive')
         self.learnable_temperature = args.learnable_temperature
+        self.temperature_reparam = args.temperature_reparam
         if self.learnable_temperature:
+            inverse_temperature = 1.0 / self.temperature
+            if self.temperature_reparam == 'exp':
+                initial_v = math.log(inverse_temperature)
+            elif self.temperature_reparam == 'softplus':
+                initial_v = self._inverse_softplus(inverse_temperature)
+            else:
+                raise ValueError(
+                    'Unknown temperature reparameterization: {}'.format(
+                        self.temperature_reparam))
             self.temperature_v = nn.Parameter(torch.tensor(
-                -math.log(self.temperature), dtype=torch.float32))
+                initial_v, dtype=torch.float32))
         else:
             self.register_parameter('temperature_v', None)
         self.Neg = args.Neg
@@ -190,15 +200,15 @@ class AVENet(nn.Module):
         sim_neg_easy = ((mask_pos_cross * S_cross).view(*S_cross.shape[:2],-1).sum(-1) / mask_pos_cross.view(*mask_pos_cross.shape[:2],-1).sum(-1) ) * mask  # Easy negative BxB
         sim_neg_hard = (neg * S_diag).view(*S_diag.shape[:2],-1).sum(-1) / neg.view(*neg.shape[:2],-1).sum(-1)                                               # Hard negative Bx1
 
-        temperature = self.current_temperature()
+        inverse_temperature = self.current_inverse_temperature()
         if self.Neg:
             logits = torch.cat(
                 (sim_pos, sim_neg_easy, sim_neg_hard), 1
-            ) / temperature
+            ) * inverse_temperature
         else:
             logits = torch.cat(
                 (sim_pos, sim_neg_easy), 1
-            ) / temperature
+            ) * inverse_temperature
 
         if return_embeddings:
             img_emb = self.maxpool(img_feat).view(B, -1)
@@ -217,6 +227,22 @@ class AVENet(nn.Module):
         return S_diag, logits, mask_pos, neg, S_cross_pooled
 
     def current_temperature(self):
-        if self.temperature_v is not None:
-            return torch.exp(-self.temperature_v)
-        return self.temperature
+        inverse_temperature = self.current_inverse_temperature()
+        if torch.is_tensor(inverse_temperature):
+            return inverse_temperature.reciprocal()
+        return 1.0 / inverse_temperature
+
+    def current_inverse_temperature(self):
+        if self.temperature_v is None:
+            return 1.0 / self.temperature
+        if self.temperature_reparam == 'exp':
+            return torch.exp(self.temperature_v)
+        if self.temperature_reparam == 'softplus':
+            return F.softplus(self.temperature_v)
+        raise ValueError(
+            'Unknown temperature reparameterization: {}'.format(
+                self.temperature_reparam))
+
+    @staticmethod
+    def _inverse_softplus(value):
+        return value + math.log(-math.expm1(-value))
