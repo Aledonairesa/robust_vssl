@@ -243,6 +243,15 @@ class AVENet(nn.Module):
             'Unknown temperature reparameterization: {}'.format(
                 self.temperature_reparam))
 
+    def set_temperature(self, temperature):
+        if self.temperature_v is not None:
+            raise ValueError(
+                'Cannot set a scheduled temperature when temperature is '
+                'learnable')
+        if temperature <= 0:
+            raise ValueError('temperature must be positive')
+        self.temperature = float(temperature)
+
     @staticmethod
     def _inverse_softplus(value):
         return value + math.log(-math.expm1(-value))

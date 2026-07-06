@@ -140,27 +140,82 @@ def get_temperature_metrics(model, optim=None):
     return metrics
 
 
-def validate_temperature_checkpoint(checkpoint, args):
+def scheduled_temperature(epoch, args):
+    progress = (epoch - 1) / float(args.temperature_schedule_epochs - 1)
+    progress = min(max(progress, 0.0), 1.0)
+    return (
+        args.temperature_start
+        + progress * (args.temperature_end - args.temperature_start)
+    )
+
+
+def temperature_checkpoint_metadata(model, args):
+    metrics = get_temperature_metrics(model)
+    return {
+        'learnable_temperature': args.learnable_temperature,
+        'temperature_reparam': args.temperature_reparam,
+        'temperature': metrics['temperature'],
+        'inverse_temperature': metrics['inverse_temperature'],
+        'temperature_schedule': args.temperature_schedule,
+        'temperature_start': args.temperature_start,
+        'temperature_end': args.temperature_end,
+        'temperature_schedule_epochs': args.temperature_schedule_epochs,
+    }
+
+
+def validate_temperature_checkpoint(checkpoint, args, resume=False):
     state_dict = checkpoint.get('state_dict', {})
     has_temperature_v = any(
         key == 'temperature_v' or key.endswith('.temperature_v')
         for key in state_dict
     )
-    if not has_temperature_v:
+    if has_temperature_v:
+        if not args.learnable_temperature:
+            raise ValueError(
+                'Checkpoint contains a learnable temperature. Add '
+                '--learnable_temperature and use its original '
+                '--temperature_reparam setting.')
+
+        checkpoint_reparam = checkpoint.get('temperature_reparam', 'exp')
+        if checkpoint_reparam != args.temperature_reparam:
+            raise ValueError(
+                'Temperature reparameterization mismatch: checkpoint uses '
+                '{} but current arguments use {}.'.format(
+                    checkpoint_reparam, args.temperature_reparam))
+
+    if not resume or 'temperature_schedule' not in checkpoint:
         return
 
-    if not args.learnable_temperature:
+    checkpoint_schedule = checkpoint['temperature_schedule']
+    if checkpoint_schedule != args.temperature_schedule:
         raise ValueError(
-            'Checkpoint contains a learnable temperature. Add '
-            '--learnable_temperature and use its original '
-            '--temperature_reparam setting.')
+            'Temperature schedule mismatch: checkpoint uses {} but current '
+            'arguments use {}.'.format(
+                checkpoint_schedule, args.temperature_schedule))
 
-    checkpoint_reparam = checkpoint.get('temperature_reparam', 'exp')
-    if checkpoint_reparam != args.temperature_reparam:
-        raise ValueError(
-            'Temperature reparameterization mismatch: checkpoint uses {} '
-            'but current arguments use {}.'.format(
-                checkpoint_reparam, args.temperature_reparam))
+    if checkpoint_schedule == 'linear':
+        schedule_fields = [
+            'temperature_start',
+            'temperature_end',
+            'temperature_schedule_epochs',
+        ]
+        for field in schedule_fields:
+            checkpoint_value = checkpoint[field]
+            current_value = getattr(args, field)
+            if checkpoint_value != current_value:
+                raise ValueError(
+                    '{} mismatch: checkpoint uses {} but current arguments '
+                    'use {}.'.format(
+                        field, checkpoint_value, current_value))
+
+
+def restore_fixed_checkpoint_temperature(checkpoint, model):
+    model_without_dp = model.module if isinstance(
+        model, torch.nn.DataParallel) else model
+    if (
+            model_without_dp.temperature_v is None
+            and 'temperature' in checkpoint):
+        model_without_dp.set_temperature(checkpoint['temperature'])
 
 
 def normalize_img(value, vmax=None, vmin=None):
@@ -827,6 +882,17 @@ def main(args):
         raise ValueError(
             'temperature_reparam={} requires learnable_temperature'.format(
                 args.temperature_reparam))
+    if args.temperature_schedule == 'linear':
+        if args.learnable_temperature:
+            raise ValueError(
+                'temperature_schedule=linear cannot be combined with '
+                'learnable_temperature')
+        if args.temperature_start <= 0 or args.temperature_end <= 0:
+            raise ValueError(
+                'temperature_start and temperature_end must be positive')
+        if args.temperature_schedule_epochs < 2:
+            raise ValueError(
+                'temperature_schedule_epochs must be at least 2')
     if args.learnable_temperature and args.cl_loss == 'sigmoid':
         raise ValueError(
             'learnable_temperature cannot be combined with cl_loss=sigmoid '
@@ -908,6 +974,7 @@ def main(args):
                 model_without_dp.load_state_dict(state_dict)
             except: 
                 neq_load_customized(model_without_dp, state_dict, verbose=True)
+            restore_fixed_checkpoint_temperature(checkpoint, model)
             if 'criterion' in checkpoint:
                 try:
                     criterion.load_state_dict(checkpoint['criterion'])
@@ -954,7 +1021,7 @@ def main(args):
     if args.resume:
         if os.path.isfile(args.resume):
             checkpoint = torch.load(args.resume, map_location='cpu')
-            validate_temperature_checkpoint(checkpoint, args)
+            validate_temperature_checkpoint(checkpoint, args, resume=True)
             args.start_epoch = checkpoint['epoch']+ 1
             args.iteration = checkpoint['iteration']
             best_metric = checkpoint.get(
@@ -968,6 +1035,7 @@ def main(args):
             except:
                 print('[WARNING] resuming training with different weights')
                 neq_load_customized(model_without_dp, state_dict, verbose=True)
+            restore_fixed_checkpoint_temperature(checkpoint, model)
             if 'criterion' in checkpoint:
                 try:
                     criterion.load_state_dict(checkpoint['criterion'])
@@ -1012,6 +1080,13 @@ def main(args):
         np.random.seed(epoch)
         random.seed(epoch)
 
+        if args.temperature_schedule == 'linear':
+            epoch_temperature = scheduled_temperature(epoch, args)
+            model_without_dp.set_temperature(epoch_temperature)
+            print(
+                'Scheduled temperature: epoch {} T={:.6f}'.format(
+                    epoch, epoch_temperature))
+
         train_metrics = train_one_epoch(
             train_loader, model, criterion, optim, device, epoch, args)
 
@@ -1038,8 +1113,7 @@ def main(args):
             save_dict = {
                 'epoch': epoch,
                 'state_dict': state_dict,
-                'learnable_temperature': args.learnable_temperature,
-                'temperature_reparam': args.temperature_reparam,
+                **temperature_checkpoint_metadata(model, args),
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': checkpoint_metric,
@@ -1091,8 +1165,7 @@ def main(args):
             save_dict = {
                 'epoch': epoch,
                 'state_dict': state_dict,
-                'learnable_temperature': args.learnable_temperature,
-                'temperature_reparam': args.temperature_reparam,
+                **temperature_checkpoint_metadata(model, args),
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': args.checkpoint_metric,

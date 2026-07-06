@@ -110,6 +110,19 @@ def get_arguments():
         '--temperature_reparam', choices=['exp', 'softplus'], default='exp',
         help='Learnable inverse-temperature parameterization: exp(v) or '
              'softplus(v)')
+    parser.add_argument(
+        '--temperature_schedule', choices=['constant', 'linear'],
+        default='constant',
+        help='Fixed-temperature schedule (default: constant)')
+    parser.add_argument(
+        '--temperature_start', default=0.01, type=float,
+        help='Initial temperature for the linear schedule')
+    parser.add_argument(
+        '--temperature_end', default=0.09, type=float,
+        help='Final temperature for the linear schedule')
+    parser.add_argument(
+        '--temperature_schedule_epochs', default=80, type=int,
+        help='Number of epochs over which to complete the linear schedule')
     
     parser.add_argument("--seed", default=4, type=int, help='Seed for torch and numpy initlization: 0 1 2 3 4 ')
     
