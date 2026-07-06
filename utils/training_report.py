@@ -126,6 +126,12 @@ DASHBOARD_PLOTS = [
             ('val_epoch_seconds', 'Validation'),
         ],
     ),
+    (
+        'Temperature',
+        [
+            ('train_temperature', 'Train temperature'),
+        ],
+    ),
 ]
 
 
