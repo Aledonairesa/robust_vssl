@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore")
 import random
 # torchaudio.set_audio_backend("sox_io")
 sys.path.append('./datasets/')
+from concurrent.futures import ThreadPoolExecutor
 
 
 class GaussianBlur(object):
@@ -164,35 +165,10 @@ class GetAudioVideoDataset(Dataset):
         # Retrieve list of audio and video files
         self.video_files = []
    
-        for item in data[:]:
-            if self.sample_layout == 'explicit_paths':
-                audio_check_path = item['audio_path']
-                image_check_path = item['image_path']
-                annotation_check_path = item.get('mask_path')
-            else:
-                # Define audio path
-                audio_check_path = os.path.join(self.audio_path, item + '.wav')
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            results = list(executor.map(self._check_sample, data))
 
-                # Define image path based on dataset and mode
-                if self.sample_layout == 'vggs_train':
-                    image_check_path = os.path.join(self.video_path, item, '125.jpg')
-                else:
-                    image_check_path = os.path.join(self.video_path, item + '.jpg')
-                annotation_check_path = None
-                if self._annotation_format == 'bbox_xml':
-                    annotation_check_path = os.path.join(
-                        self.args.vggss_test_path, 'anno', item + '.xml')
-
-            files_exist = (
-                os.path.exists(audio_check_path)
-                and os.path.exists(image_check_path)
-                and (
-                    annotation_check_path is None
-                    or os.path.exists(annotation_check_path)
-                )
-            )
-
-            # Ensure required files exist before appending
+        for item, files_exist, annotation_check_path in results:
             if files_exist:
                 self.video_files.append(item)
                 if annotation_check_path:
@@ -202,8 +178,10 @@ class GetAudioVideoDataset(Dataset):
                         else item)
                     self.annotation_paths[name] = annotation_check_path
                     if self._annotation_format == 'binary_mask':
-                        self.annotation_thresholds[name] = item.get(
-                            'mask_threshold', 127)
+                        self.annotation_thresholds[name] = (
+                            item.get('mask_threshold', 127)
+                            if isinstance(item, dict) else 127
+                        )
 
         print("{0} requested dataset size: {1}".format(self.mode.upper() , len(data)))
         print("{0} actual available size: {1}".format(self.mode.upper() , len(self.video_files)))
@@ -214,6 +192,30 @@ class GetAudioVideoDataset(Dataset):
                 .format(self.mode.upper(), len(data)))
 
         self.count = 0
+    
+    def _check_sample(self, item):
+        """Returns (item, exists, annotation_path) for one sample."""
+        if self.sample_layout == 'explicit_paths':
+            audio_check_path = item['audio_path']
+            image_check_path = item['image_path']
+            annotation_check_path = item.get('mask_path')
+        else:
+            audio_check_path = os.path.join(self.audio_path, item + '.wav')
+            if self.sample_layout == 'vggs_train':
+                image_check_path = os.path.join(self.video_path, item, '125.jpg')
+            else:
+                image_check_path = os.path.join(self.video_path, item + '.jpg')
+            annotation_check_path = None
+            if self._annotation_format == 'bbox_xml':
+                annotation_check_path = os.path.join(
+                    self.args.vggss_test_path, 'anno', item + '.xml')
+
+        files_exist = (
+            os.path.exists(audio_check_path)
+            and os.path.exists(image_check_path)
+            and (annotation_check_path is None or os.path.exists(annotation_check_path))
+        )
+        return item, files_exist, annotation_check_path
 
     def _resolve_dataset_path(self, root, relative_path):
         if relative_path.startswith('./') or relative_path.startswith('.\\'):
