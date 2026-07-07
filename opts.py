@@ -23,7 +23,7 @@ def get_arguments():
     parser.add_argument('--avsbench_test_path', default='data/AVSBench',
                         type=str, help='Root directory path of AVSBench data')
    
-    parser.add_argument('--train_set_scale', default='fullset', type=str, help="fullset | subset_144k | subset_143k | subset_10k | subset_1k | subset_100")
+    parser.add_argument('--train_set_scale', default='fullset', type=str, help="fullset | subset_144k | subset_143k | subset_40k | subset_20k | subset_10k | subset_5k | subset_1k | subset_100")
     parser.add_argument('--test_set_scale', default='fullset', type=str, help="fullset | subset_250 | subset_50")
     parser.add_argument('--val_set_scale', default='subset_1k', type=str, help='validation set scale: subset_1k | subset_250')
     parser.add_argument('--test_set', default="VGGSS", type=str,

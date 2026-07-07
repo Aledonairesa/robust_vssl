@@ -58,6 +58,12 @@ class GetAudioVideoDataset(Dataset):
                 train_list_file = 'train_vggs_143k.txt'
             elif self.args.train_set_scale == 'subset_10k':
                 train_list_file = 'train_vggs_10k.txt'
+            elif self.args.train_set_scale == 'subset_5k':
+                train_list_file = 'train_vggs_5k.txt'
+            elif self.args.train_set_scale == 'subset_20k':
+                train_list_file = 'train_vggs_20k.txt'
+            elif self.args.train_set_scale == 'subset_40k':
+                train_list_file = 'train_vggs_40k.txt'
             elif self.args.train_set_scale == 'subset_1k':
                 train_list_file = 'train_vggs_1k.txt'
             elif self.args.train_set_scale == 'subset_100':
