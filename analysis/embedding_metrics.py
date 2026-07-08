@@ -1,6 +1,57 @@
 import numpy as np
 
 
+def mean_joint_angular_displacement_deg(previous_image_emb,
+                                        previous_audio_emb,
+                                        current_image_emb,
+                                        current_audio_emb,
+                                        epoch_delta=1):
+    """Return mean image/audio angular displacement in degrees per epoch."""
+    arrays = {
+        'previous image': np.asarray(previous_image_emb, dtype=np.float64),
+        'previous audio': np.asarray(previous_audio_emb, dtype=np.float64),
+        'current image': np.asarray(current_image_emb, dtype=np.float64),
+        'current audio': np.asarray(current_audio_emb, dtype=np.float64),
+    }
+    shapes = {name: value.shape for name, value in arrays.items()}
+    if len(set(shapes.values())) != 1:
+        raise ValueError(
+            'Angular displacement requires matching shapes, got {}'.format(
+                shapes))
+    if arrays['current image'].ndim != 2:
+        raise ValueError(
+            'Angular displacement expects 2D embedding arrays, got {}'.format(
+                arrays['current image'].shape))
+    if arrays['current image'].shape[0] == 0:
+        raise ValueError('Angular displacement requires at least one sample.')
+    if epoch_delta <= 0:
+        raise ValueError(
+            'epoch_delta must be positive, got {}'.format(epoch_delta))
+
+    normalized = {}
+    for name, value in arrays.items():
+        if not np.isfinite(value).all():
+            raise ValueError(
+                '{} embeddings contain non-finite values.'.format(name))
+        norms = np.linalg.norm(value, axis=1, keepdims=True)
+        zero_indices = np.flatnonzero(norms[:, 0] == 0)
+        if zero_indices.size:
+            raise ValueError(
+                '{} embeddings contain {} zero-norm rows; first index: {}'
+                .format(name, zero_indices.size, zero_indices[0]))
+        normalized[name] = value / norms
+
+    image_cosines = np.sum(
+        normalized['previous image'] * normalized['current image'], axis=1)
+    audio_cosines = np.sum(
+        normalized['previous audio'] * normalized['current audio'], axis=1)
+    image_angles = np.arccos(np.clip(image_cosines, -1.0, 1.0))
+    audio_angles = np.arccos(np.clip(audio_cosines, -1.0, 1.0))
+    joint_mean_radians = 0.5 * (
+        image_angles.mean() + audio_angles.mean())
+    return float(np.degrees(joint_mean_radians) / epoch_delta)
+
+
 def _centroids(image_emb, audio_emb):
     return image_emb.mean(axis=0), audio_emb.mean(axis=0)
 

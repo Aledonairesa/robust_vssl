@@ -19,7 +19,10 @@ try:
         compute_topk_retrieval_rows,
         plot_class_metric_outputs,
     )
-    from embedding_metrics import METRICS
+    from embedding_metrics import (
+        METRICS,
+        mean_joint_angular_displacement_deg,
+    )
     from retrieval_metrics import (
         compute_instance_retrieval_metrics,
         compute_semantic_retrieval_metrics,
@@ -34,7 +37,10 @@ except ImportError:
         compute_topk_retrieval_rows,
         plot_class_metric_outputs,
     )
-    from analysis.embedding_metrics import METRICS
+    from analysis.embedding_metrics import (
+        METRICS,
+        mean_joint_angular_displacement_deg,
+    )
     from analysis.retrieval_metrics import (
         compute_instance_retrieval_metrics,
         compute_semantic_retrieval_metrics,
@@ -49,6 +55,9 @@ IMAGE_EMBEDDING_KEYS = {
 }
 IMAGE_EMBEDDING_CHOICES = tuple(IMAGE_EMBEDDING_KEYS)
 VAL_BROAD_CLASS_SET = 'VGGS'
+VAL_ANGULAR_DISPLACEMENT_METRIC = (
+    'joint_angular_displacement_deg_per_epoch'
+)
 
 
 def parse_args():
@@ -147,6 +156,50 @@ def compute_metrics(path, names=None, image_emb=None, audio_emb=None,
     return row
 
 
+def align_previous_validation_embeddings(current_names, previous_names,
+                                         previous_image_emb,
+                                         previous_audio_emb,
+                                         current_epoch, previous_epoch):
+    current_names = [str(name) for name in current_names]
+    previous_names = [str(name) for name in previous_names]
+
+    if len(current_names) != len(set(current_names)):
+        raise ValueError(
+            'Validation epoch {} contains duplicate sample names.'.format(
+                current_epoch))
+    if len(previous_names) != len(set(previous_names)):
+        raise ValueError(
+            'Validation epoch {} contains duplicate sample names.'.format(
+                previous_epoch))
+
+    current_set = set(current_names)
+    previous_set = set(previous_names)
+    if current_set != previous_set:
+        missing = sorted(previous_set - current_set)
+        added = sorted(current_set - previous_set)
+        raise ValueError(
+            'Validation sample names changed between epochs {} and {}: '
+            '{} missing and {} added. First missing: {}; first added: {}'
+            .format(
+                previous_epoch,
+                current_epoch,
+                len(missing),
+                len(added),
+                missing[:3],
+                added[:3],
+            ))
+
+    previous_index = {
+        name: idx for idx, name in enumerate(previous_names)
+    }
+    aligned_indices = np.asarray(
+        [previous_index[name] for name in current_names], dtype=int)
+    return (
+        previous_image_emb[aligned_indices],
+        previous_audio_emb[aligned_indices],
+    )
+
+
 def reduce_avsbench_for_retrieval(names, image_emb, audio_emb, labels):
     grouped = {}
     passthrough_indices = []
@@ -181,7 +234,7 @@ def reduce_avsbench_for_retrieval(names, image_emb, audio_emb, labels):
 def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
                 class_retrieval_top_k, image_embedding):
     val_dir = embeddings_dir / 'val'
-    files = sorted(val_dir.glob('epoch_*.npz'))
+    files = sorted(val_dir.glob('epoch_*.npz'), key=parse_epoch)
     if not files:
         print('No validation embedding files found in {}'.format(val_dir))
         return None
@@ -189,6 +242,7 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
     rows = []
     class_rows = []
     topk_retrieval_rows = []
+    previous = None
     for path in files:
         names, image_emb, audio_emb = load_embedding_file(
             path, image_embedding=image_embedding)
@@ -199,7 +253,33 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
             image_embedding=image_embedding)
         row['split'] = 'val'
         row['dataset'] = VAL_BROAD_CLASS_SET
+        if previous is None:
+            row[VAL_ANGULAR_DISPLACEMENT_METRIC] = float('nan')
+        else:
+            previous_epoch, previous_names, previous_image, previous_audio = (
+                previous
+            )
+            aligned_previous_image, aligned_previous_audio = (
+                align_previous_validation_embeddings(
+                    names,
+                    previous_names,
+                    previous_image,
+                    previous_audio,
+                    epoch,
+                    previous_epoch,
+                )
+            )
+            row[VAL_ANGULAR_DISPLACEMENT_METRIC] = (
+                mean_joint_angular_displacement_deg(
+                    aligned_previous_image,
+                    aligned_previous_audio,
+                    image_emb,
+                    audio_emb,
+                    epoch_delta=epoch - previous_epoch,
+                )
+            )
         rows.append(row)
+        previous = (epoch, names, image_emb, audio_emb)
 
         try:
             labels, diagnostics = assign_broad_classes(
