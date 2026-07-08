@@ -8,6 +8,7 @@ import sys
 sys.path.append('..')
 from networks import base_models
 from networks.beats import BEATsWrapper
+from models.lora import count_lora_parameters, inject_dino_qv_lora
 
 
 class AVENet(nn.Module):
@@ -20,6 +21,8 @@ class AVENet(nn.Module):
         self.use_vision_blocks = args.use_vision_blocks
         self.use_audio_blocks = args.use_audio_blocks
         self.freeze_dino = args.freeze_dino
+        self.use_dino_lora = getattr(args, 'use_dino_lora', False)
+        self.dino_lora_rank = getattr(args, 'dino_lora_rank', 8)
         self.freeze_whisper = args.freeze_whisper
         self.freeze_beats = args.freeze_beats
         self.trimap = args.tri_map
@@ -47,15 +50,35 @@ class AVENet(nn.Module):
             self.register_parameter('temperature_v', None)
         self.Neg = args.Neg
 
+        if self.use_dino_lora and self.img_backbone_type != 'dino_vit':
+            raise ValueError(
+                '--use_dino_lora requires --img_backbone_type dino_vit')
+        if self.use_dino_lora and self.dino_lora_rank <= 0:
+            raise ValueError('--dino_lora_rank must be positive')
+
         # Image backbone
         if self.img_backbone_type == 'resnet18':
             self.img_backbone = base_models.resnet18(modal='vision', pretrained=False)
 
         elif self.img_backbone_type == 'dino_vit':
             self.img_backbone = AutoModel.from_pretrained(args.dino_model_name)
-            if self.freeze_dino:
+            if self.freeze_dino or self.use_dino_lora:
                 for param in self.img_backbone.parameters():
                     param.requires_grad = False
+            if self.use_dino_lora:
+                adapted_names = inject_dino_qv_lora(
+                    self.img_backbone,
+                    rank=self.dino_lora_rank,
+                    alpha=2 * self.dino_lora_rank,
+                    dropout=0.05,
+                )
+                print(
+                    '[DINO LoRA] adapted {} projections with rank {} '
+                    '({:,} trainable LoRA parameters)'.format(
+                        len(adapted_names), self.dino_lora_rank,
+                        count_lora_parameters(self.img_backbone)))
+                print('[DINO LoRA] modules: {}'.format(
+                    ', '.join(adapted_names)))
             if self.use_vision_blocks:
                 encoder_layer = nn.TransformerEncoderLayer(d_model=768, nhead=12, batch_first=True)
                 self.vision_blocks = nn.TransformerEncoder(encoder_layer, num_layers=2)

@@ -36,6 +36,10 @@ def get_arguments():
     parser.add_argument('--dino_model_name', default='facebook/dinov3-vitb16-pretrain-lvd1689m', type=str, help='DINO ViT model name from HuggingFace')
     parser.add_argument('--freeze_dino', type=parse_bool, default=True,
                         help='Whether to freeze the DINO backbone during training')
+    parser.add_argument('--use_dino_lora', action='store_true',
+                        help='Enable LoRA on the DINO query/value projections; the DINO base remains frozen')
+    parser.add_argument('--dino_lora_rank', default=8, type=int,
+                        help='LoRA rank for DINO query/value projections (default: 8)')
     parser.add_argument('--use_vision_blocks', action='store_true', help='Whether to use additional vision transformer blocks after DINO ViT backbone')
     parser.add_argument('--aud_backbone_type', default='resnet18', type=str,
                         choices=['resnet18', 'whisper', 'beats'], help='resnet18 | whisper | beats')
