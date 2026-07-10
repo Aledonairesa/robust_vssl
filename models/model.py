@@ -9,6 +9,7 @@ sys.path.append('..')
 from networks import base_models
 from networks.beats import BEATsWrapper
 from models.lora import count_lora_parameters, inject_dino_qv_lora
+from models.modality_adversary import ModalityAdversary
 
 
 class AVENet(nn.Module):
@@ -23,6 +24,8 @@ class AVENet(nn.Module):
         self.freeze_dino = args.freeze_dino
         self.use_dino_lora = getattr(args, 'use_dino_lora', False)
         self.dino_lora_rank = getattr(args, 'dino_lora_rank', 8)
+        self.use_modality_adversary = getattr(
+            args, 'use_modality_adversary', False)
         self.freeze_whisper = args.freeze_whisper
         self.freeze_beats = args.freeze_beats
         self.trimap = args.tri_map
@@ -117,6 +120,14 @@ class AVENet(nn.Module):
             self.aud_proj = nn.Linear(self.aud_backbone.output_dim, 512)
 
         self.maxpool = nn.AdaptiveMaxPool2d((1, 1))
+        self.modality_adversary = None
+        if self.use_modality_adversary:
+            self.modality_adversary = ModalityAdversary(
+                embedding_dim=512,
+                hidden_dim=512,
+                num_layers=5,
+                grl_scale=1.0,
+            )
 
         # Initialize from scratch only the necessary modules
         modules_to_init = []
@@ -131,6 +142,8 @@ class AVENet(nn.Module):
             modules_to_init.append(self.img_proj)
         else:
             modules_to_init.append(self.img_backbone)
+        if self.modality_adversary is not None:
+            modules_to_init.append(self.modality_adversary)
 
         for module in modules_to_init:
             for m in module.modules():
@@ -248,6 +261,24 @@ class AVENet(nn.Module):
             return S_diag, logits, mask_pos, neg, S_cross_pooled, embeddings
 
         return S_diag, logits, mask_pos, neg, S_cross_pooled
+
+    def modality_adversary_loss(self, embeddings):
+        if self.modality_adversary is None:
+            raise RuntimeError('Modality adversary is not enabled.')
+
+        image_emb = embeddings['image_emb_positive_mask_mean']
+        audio_emb = embeddings['audio_emb']
+        classifier_inputs = torch.cat([image_emb, audio_emb], dim=0)
+        labels = torch.cat([
+            torch.zeros(image_emb.size(0), device=classifier_inputs.device),
+            torch.ones(audio_emb.size(0), device=classifier_inputs.device),
+        ], dim=0)
+
+        logits = self.modality_adversary(classifier_inputs)
+        loss = F.binary_cross_entropy_with_logits(logits, labels)
+        accuracy = ((logits >= 0).float() == labels).float().mean()
+
+        return loss, accuracy
 
     def current_temperature(self):
         inverse_temperature = self.current_inverse_temperature()

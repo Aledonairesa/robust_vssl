@@ -149,6 +149,10 @@ def get_arguments():
                         help='Image embedding used by L_ATP and L_CU: localized positive-mask mean or global maxpool.')
     parser.add_argument('--atp_cu_start_epoch', type=int, default=1,
                         help='Epoch from which L_ATP/L_CU are enabled when their weights are > 0.')
+    parser.add_argument('--use_modality_adversary', action='store_true',
+                        help='Enable a GRL modality classifier on validation-style image/audio embeddings.')
+    parser.add_argument('--modality_adv_weight', type=float, default=1.0,
+                        help='Weight for the modality-adversarial BCE loss. Default: 1.0.')
 
     parser.add_argument('--lambda_trans_ts', type=float,  default=1.0, help='Weights for the transformation equivariance loss')
     parser.add_argument('--lambda_trans_cl', type=float,  default=1.0, help='Weights for the transformation CL loss')

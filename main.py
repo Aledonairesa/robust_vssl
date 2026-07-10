@@ -348,6 +348,10 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     losses_atp_ts = AverageMeter('Loss_ATP_ts',':.4f')
     losses_cu = AverageMeter('Loss_CU',':.4f')
     losses_cu_ts = AverageMeter('Loss_CU_ts',':.4f')
+    losses_modality = AverageMeter('Loss_Modality',':.4f')
+    losses_modality_ts = AverageMeter('Loss_Modality_ts',':.4f')
+    modality_acc = AverageMeter('Modality_acc',':.4f')
+    modality_acc_ts = AverageMeter('Modality_acc_ts',':.4f')
     top1_meter_i2a = AverageMeter('acc@1_i2a', ':.4f')
     top5_meter_i2a = AverageMeter('acc@5_i2a', ':.4f')
     top1_meter_a2i = AverageMeter('acc@1_a2i', ':.4f')
@@ -368,17 +372,23 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     lambda_trans_equiv = args.trans_equi_weight
     lambda_atp = args.lambda_atp
     lambda_cu = args.lambda_cu
+    use_modality_adversary = args.use_modality_adversary
+    lambda_modality = (
+        args.modality_adv_weight if use_modality_adversary else 0.0)
+    model_without_dp = model.module if isinstance(
+        model, torch.nn.DataParallel) else model
     use_atp_cu = (
         (lambda_atp > 0 or lambda_cu > 0)
         and epoch >= args.atp_cu_start_epoch
     )
+    need_embeddings = use_atp_cu or use_modality_adversary
     
     for idx, (image, spec, audio, name) in enumerate(train_loader):
         data_time.update(time.time() - end)
         spec = spec.to(device, non_blocking=True)
         image = image.to(device, non_blocking=True)
         B = image.size(0)
-        if use_atp_cu:
+        if need_embeddings:
             heatmap, out, Pos, Neg, out_ref, embeddings = model(
                 image.float(), spec.float(), return_embeddings=True)
             if lambda_atp > 0:
@@ -391,10 +401,18 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
                     embeddings, args.atp_cu_image_embedding)
             else:
                 loss_cu = torch.zeros((), device=device)
+            if use_modality_adversary:
+                loss_modality, current_modality_acc = (
+                    model_without_dp.modality_adversary_loss(embeddings))
+            else:
+                loss_modality = torch.zeros((), device=device)
+                current_modality_acc = torch.zeros((), device=device)
         else:
             heatmap, out, Pos, Neg, out_ref = model(image.float(), spec.float())
             loss_atp = torch.zeros((), device=device)
             loss_cu = torch.zeros((), device=device)
+            loss_modality = torch.zeros((), device=device)
+            current_modality_acc = torch.zeros((), device=device)
 
         if args.heatmap_no_grad:
             heatmap = heatmap.detach()
@@ -417,7 +435,7 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
 
         transformed_image = tf_equiv_loss.transform(image)
         
-        if use_atp_cu:
+        if need_embeddings:
             heatmap_ts, out_ts, Pos, Neg, out_ref, embeddings_ts = model(
                 transformed_image.float(), spec.float(), return_embeddings=True)
             if lambda_atp > 0:
@@ -430,11 +448,19 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
                     embeddings_ts, args.atp_cu_image_embedding)
             else:
                 loss_cu_ts = torch.zeros((), device=device)
+            if use_modality_adversary:
+                loss_modality_ts, current_modality_acc_ts = (
+                    model_without_dp.modality_adversary_loss(embeddings_ts))
+            else:
+                loss_modality_ts = torch.zeros((), device=device)
+                current_modality_acc_ts = torch.zeros((), device=device)
         else:
             heatmap_ts, out_ts, Pos, Neg, out_ref = model(
                 transformed_image.float(), spec.float())
             loss_atp_ts = torch.zeros((), device=device)
             loss_cu_ts = torch.zeros((), device=device)
+            loss_modality_ts = torch.zeros((), device=device)
+            current_modality_acc_ts = torch.zeros((), device=device)
         loss_cl_ts = criterion(out_ts, target)
         logits_ts_i2a = out_ts
         logits_ts_a2i = get_logits_a2i(out_ts)
@@ -445,11 +471,13 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         loss_ts = tf_equiv_loss(heatmap_ts, ts_heatmap)
         loss_atp_total = 0.5 * (loss_atp + loss_atp_ts)
         loss_cu_total = 0.5 * (loss_cu + loss_cu_ts)
+        loss_modality_total = 0.5 * (loss_modality + loss_modality_ts)
         loss = (
             0.5 * (loss_cl + loss_cl_ts)
             + lambda_trans_equiv * loss_ts
             + lambda_atp * loss_atp_total
             + lambda_cu * loss_cu_total
+            + lambda_modality * loss_modality_total
         )
 
         losses.update(loss.item(), B)
@@ -460,6 +488,10 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         losses_atp_ts.update(loss_atp_ts.item(), B)
         losses_cu.update(loss_cu.item(), B)
         losses_cu_ts.update(loss_cu_ts.item(), B)
+        losses_modality.update(loss_modality.item(), B)
+        losses_modality_ts.update(loss_modality_ts.item(), B)
+        modality_acc.update(current_modality_acc.item(), B)
+        modality_acc_ts.update(current_modality_acc_ts.item(), B)
 
         top1_meter_i2a.update(top1_i2a.item(), B)
         top5_meter_i2a.update(top5_i2a.item(), B)
@@ -487,6 +519,10 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
             args.train_plotter.add_data('local/loss_atp_ts', loss_atp_ts.item(), args.iteration)
             args.train_plotter.add_data('local/loss_cu', loss_cu.item(), args.iteration)
             args.train_plotter.add_data('local/loss_cu_ts', loss_cu_ts.item(), args.iteration)
+            args.train_plotter.add_data('local/loss_modality', loss_modality.item(), args.iteration)
+            args.train_plotter.add_data('local/loss_modality_ts', loss_modality_ts.item(), args.iteration)
+            args.train_plotter.add_data('local/modality_acc', current_modality_acc.item(), args.iteration)
+            args.train_plotter.add_data('local/modality_acc_ts', current_modality_acc_ts.item(), args.iteration)
             args.train_plotter.add_data('local/loss', losses.local_avg, args.iteration)
             args.train_plotter.add_data('local/top1_i2a', top1_meter_i2a.local_avg, args.iteration)
             args.train_plotter.add_data('local/top5_i2a', top5_meter_i2a.local_avg, args.iteration)
@@ -539,6 +575,10 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
     args.train_plotter.add_data('global/loss_atp_ts', losses_atp_ts.avg, epoch)
     args.train_plotter.add_data('global/loss_cu', losses_cu.avg, epoch)
     args.train_plotter.add_data('global/loss_cu_ts', losses_cu_ts.avg, epoch)
+    args.train_plotter.add_data('global/loss_modality', losses_modality.avg, epoch)
+    args.train_plotter.add_data('global/loss_modality_ts', losses_modality_ts.avg, epoch)
+    args.train_plotter.add_data('global/modality_acc', modality_acc.avg, epoch)
+    args.train_plotter.add_data('global/modality_acc_ts', modality_acc_ts.avg, epoch)
     args.train_plotter.add_data('global/top1_i2a', top1_meter_i2a.avg, epoch)
     args.train_plotter.add_data('global/top5_i2a', top5_meter_i2a.avg, epoch)
     args.train_plotter.add_data('global/top1_a2i', top1_meter_a2i.avg, epoch)
@@ -575,6 +615,8 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         'loss_atp_ts': losses_atp_ts.avg,
         'loss_cu': losses_cu.avg,
         'loss_cu_ts': losses_cu_ts.avg,
+        'loss_modality': losses_modality.avg,
+        'loss_modality_ts': losses_modality_ts.avg,
         'loss_cl_weighted': 0.5 * losses_cl.avg,
         'loss_cl_ts_weighted': 0.5 * losses_cl_ts.avg,
         'loss_ts_weighted': lambda_trans_equiv * losses_ts.avg,
@@ -582,11 +624,15 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
             lambda_atp * 0.5 * (losses_atp.avg + losses_atp_ts.avg)),
         'loss_cu_weighted': (
             lambda_cu * 0.5 * (losses_cu.avg + losses_cu_ts.avg)),
+        'loss_modality_weighted': (
+            lambda_modality * 0.5 * (
+                losses_modality.avg + losses_modality_ts.avg)),
         'loss_cl_weight': 0.5,
         'loss_cl_ts_weight': 0.5,
         'loss_ts_weight': lambda_trans_equiv,
         'loss_atp_weight': lambda_atp,
         'loss_cu_weight': lambda_cu,
+        'loss_modality_weight': lambda_modality,
         'top1_i2a': top1_meter_i2a.avg,
         'top5_i2a': top5_meter_i2a.avg,
         'top1_a2i': top1_meter_a2i.avg,
@@ -595,6 +641,8 @@ def train_one_epoch(train_loader, model, criterion, optim, device, epoch, args):
         'top5_ts_i2a': top5_meter_ts_i2a.avg,
         'top1_ts_a2i': top1_meter_ts_a2i.avg,
         'top5_ts_a2i': top5_meter_ts_a2i.avg,
+        'modality_acc': modality_acc.avg,
+        'modality_ts_acc': modality_acc_ts.avg,
         'epoch_seconds': epoch_seconds,
         **temperature_metrics,
         **sigmoid_metrics,
@@ -866,6 +914,8 @@ def main(args):
         raise ValueError('lambda_cu must be non-negative')
     if args.atp_cu_start_epoch < 1:
         raise ValueError('atp_cu_start_epoch must be at least 1')
+    if args.modality_adv_weight < 0:
+        raise ValueError('modality_adv_weight must be non-negative')
     if args.temperature <= 0:
         raise ValueError('temperature must be positive')
     if args.temperature_lr_scale <= 0:
