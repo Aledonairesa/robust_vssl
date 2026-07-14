@@ -237,6 +237,23 @@ LOSS_DASHBOARD_PLOTS = [
             },
         ],
     },
+    {
+        'title': 'Sigmoid Loss Parameters',
+        'optional': True,
+        # exp(t) is always positive for the sigmoid loss, including when the
+        # raw t and b parameters are both initialized to zero.
+        'activation_weight_field': 'train_sigmoid_scale',
+        'series': [
+            {
+                'field': 'train_sigmoid_t',
+                'label': 't (logit scale parameter)',
+            },
+            {
+                'field': 'train_sigmoid_b',
+                'label': 'b (logit bias)',
+            },
+        ],
+    },
 ]
 
 
