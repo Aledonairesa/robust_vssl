@@ -48,7 +48,7 @@ class SigmoidContrastiveLoss(nn.Module):
 
         logits = self.t.exp() * logits + self.b
         loss = F.softplus(-labels * logits)
-        return loss[valid].mean()
+        return loss[valid].sum() / logits.size(0)
 
 
 def get_logits_a2i(logits):
@@ -112,6 +112,59 @@ def build_criterion(args):
     if args.cl_loss == 'sigmoid':
         return SigmoidContrastiveLoss(args.sigmoid_t_init, args.sigmoid_b_init)
     raise ValueError('Unknown contrastive loss: {}'.format(args.cl_loss))
+
+
+def build_optimizer(model, criterion, args):
+    model_without_dp = (
+        model.module if isinstance(model, torch.nn.DataParallel) else model)
+    model_trainable_params = list(filter(
+        lambda p: p.requires_grad, model.parameters()))
+    criterion_trainable_params = list(filter(
+        lambda p: p.requires_grad, criterion.parameters()))
+    trainable_params = model_trainable_params + criterion_trainable_params
+
+    if model_without_dp.temperature_v is not None:
+        temperature_param = model_without_dp.temperature_v
+        regular_params = [
+            param for param in trainable_params
+            if param is not temperature_param
+        ]
+        optimizer_params = [
+            {
+                'params': regular_params,
+                'weight_decay': args.weight_decay,
+            },
+            {
+                'params': [temperature_param],
+                'lr': args.learning_rate * args.temperature_lr_scale,
+                'weight_decay': 0.0,
+            },
+        ]
+    elif isinstance(criterion, SigmoidContrastiveLoss):
+        optimizer_params = [
+            {
+                'params': model_trainable_params,
+                'weight_decay': args.weight_decay,
+            },
+            {
+                'params': criterion_trainable_params,
+                'weight_decay': 0.0,
+            },
+        ]
+    else:
+        optimizer_params = trainable_params
+
+    adam_betas = (
+        (0.9, 0.95)
+        if isinstance(criterion, SigmoidContrastiveLoss)
+        else (0.9, 0.999)
+    )
+    return Adam(
+        optimizer_params,
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
+        betas=adam_betas,
+    )
 
 
 def get_temperature_metrics(model, optim=None):
@@ -983,32 +1036,7 @@ def main(args):
         model_without_dp = model
 
     criterion = build_criterion(args).to(device)
-    trainable_params = list(filter(lambda p: p.requires_grad, model.parameters()))
-    trainable_params += list(filter(lambda p: p.requires_grad, criterion.parameters()))
-    if model_without_dp.temperature_v is not None:
-        temperature_param = model_without_dp.temperature_v
-        regular_params = [
-            param for param in trainable_params
-            if param is not temperature_param
-        ]
-        optimizer_params = [
-            {
-                'params': regular_params,
-                'weight_decay': args.weight_decay,
-            },
-            {
-                'params': [temperature_param],
-                'lr': args.learning_rate * args.temperature_lr_scale,
-                'weight_decay': 0.0,
-            },
-        ]
-    else:
-        optimizer_params = trainable_params
-    optim = Adam(
-        optimizer_params,
-        lr=args.learning_rate,
-        weight_decay=args.weight_decay,
-    )
+    optim = build_optimizer(model, criterion, args)
     scheduler = lr_scheduler.MultiStepLR(optim, milestones=[300,700,900], gamma=0.1)
     args.iteration = 1
     
