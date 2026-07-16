@@ -47,8 +47,8 @@ def parse_args():
                         choices=['val', 'test'],
                         help='Embedding splits to visualize')
     parser.add_argument('--visualizations', nargs='+',
-                        default=['umap', 'cosine_similarity_hist'],
-                        choices=['umap', 'class_umap',
+                        default=['umap', 'pca', 'cosine_similarity_hist'],
+                        choices=['umap', 'pca', 'class_umap',
                                  'cosine_similarity_hist'],
                         help='Visualization types to generate')
     parser.add_argument('--test_set', default=None, type=str,
@@ -62,7 +62,7 @@ def parse_args():
     parser.add_argument('--min_dist', type=float, default=0.1,
                         help='UMAP min_dist')
     parser.add_argument('--random_state', type=int, default=0,
-                        help='UMAP random seed')
+                        help='Dimensionality-reduction random seed')
     parser.add_argument('--point_size', type=float, default=14,
                         help='Scatter point size')
     parser.add_argument('--draw_pairs', action='store_true',
@@ -103,6 +103,21 @@ def make_umap(args):
     )
 
 
+def make_pca(args):
+    try:
+        from sklearn.decomposition import PCA
+    except ImportError as exc:
+        raise ImportError(
+            'PCA visualizations require scikit-learn. Install the project '
+            'requirements in the active environment.') from exc
+
+    return PCA(
+        n_components=2,
+        svd_solver='randomized',
+        random_state=args.random_state,
+    )
+
+
 def stack_modalities(image_emb, audio_emb):
     return np.concatenate([image_emb, audio_emb], axis=0)
 
@@ -115,8 +130,9 @@ def axis_limits(coords):
     return (x_min - x_pad, x_max + x_pad, y_min - y_pad, y_max + y_pad)
 
 
-def plot_modality_umap(coords, num_samples, title, output_path, point_size,
-                       limits=None, draw_pairs=False):
+def plot_modality_projection(coords, num_samples, title, output_path,
+                             point_size, x_label, y_label, projection_name,
+                             limits=None, draw_pairs=False):
     image_coords = coords[:num_samples]
     audio_coords = coords[num_samples:]
 
@@ -157,14 +173,55 @@ def plot_modality_umap(coords, num_samples, title, output_path, point_size,
         ax.set_xlim(limits[0], limits[1])
         ax.set_ylim(limits[2], limits[3])
     ax.set_title(title)
-    ax.set_xlabel('UMAP 1')
-    ax.set_ylabel('UMAP 2')
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     ax.legend(loc='best')
     ax.grid(True, alpha=0.2)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
-    print('Saved UMAP plot to {}'.format(output_path))
+    print('Saved {} plot to {}'.format(projection_name, output_path))
+
+
+def plot_modality_umap(coords, num_samples, title, output_path, point_size,
+                       limits=None, draw_pairs=False):
+    plot_modality_projection(
+        coords,
+        num_samples,
+        title,
+        output_path,
+        point_size,
+        'UMAP 1',
+        'UMAP 2',
+        'UMAP',
+        limits=limits,
+        draw_pairs=draw_pairs,
+    )
+
+
+def pca_axis_labels(pca):
+    explained_variance = 100.0 * pca.explained_variance_ratio_
+    return (
+        'PC1 ({:.1f}% variance)'.format(explained_variance[0]),
+        'PC2 ({:.1f}% variance)'.format(explained_variance[1]),
+    )
+
+
+def plot_modality_pca(coords, num_samples, title, output_path, point_size,
+                      pca, limits=None, draw_pairs=False):
+    x_label, y_label = pca_axis_labels(pca)
+    plot_modality_projection(
+        coords,
+        num_samples,
+        title,
+        output_path,
+        point_size,
+        x_label,
+        y_label,
+        'PCA',
+        limits=limits,
+        draw_pairs=draw_pairs,
+    )
 
 
 def broad_class_colors(labels):
@@ -474,6 +531,45 @@ def visualize_val_umap(loaded, plots_dir, args):
     create_gif(frame_paths, gif_path, args.gif_duration)
 
 
+def visualize_val_pca(loaded, plots_dir, args):
+    all_embeddings = []
+    for path, names, image_emb, audio_emb in loaded:
+        embeddings = stack_modalities(image_emb, audio_emb)
+        all_embeddings.append(embeddings)
+
+    all_embeddings = np.concatenate(all_embeddings, axis=0)
+    reducer = make_pca(args)
+    all_coords = reducer.fit_transform(all_embeddings)
+    limits = axis_limits(all_coords)
+
+    val_plot_dir = plots_dir / 'pca' / 'val'
+    val_plot_dir.mkdir(parents=True, exist_ok=True)
+
+    frame_paths = []
+    offset = 0
+    for path, names, image_emb, audio_emb in loaded:
+        embeddings = stack_modalities(image_emb, audio_emb)
+        epoch = parse_epoch(path)
+        coords = all_coords[offset:offset + len(embeddings)]
+        offset += len(embeddings)
+
+        frame_path = val_plot_dir / 'epoch_{:04d}.png'.format(epoch)
+        plot_modality_pca(
+            coords,
+            len(names),
+            'Validation PCA epoch {:04d}'.format(epoch),
+            frame_path,
+            args.point_size,
+            reducer,
+            limits=limits,
+            draw_pairs=args.draw_pairs,
+        )
+        frame_paths.append(frame_path)
+
+    gif_path = plots_dir / 'pca' / 'val_evolution.gif'
+    create_gif(frame_paths, gif_path, args.gif_duration)
+
+
 def visualize_val_class_umap(loaded, plots_dir, args):
     all_embeddings = []
     for path, names, image_emb, audio_emb in loaded:
@@ -561,6 +657,8 @@ def visualize_val(embeddings_dir, plots_dir, args):
 
     if 'umap' in args.visualizations:
         visualize_val_umap(loaded, plots_dir, args)
+    if 'pca' in args.visualizations:
+        visualize_val_pca(loaded, plots_dir, args)
     if 'class_umap' in args.visualizations:
         visualize_val_class_umap(loaded, plots_dir, args)
     if 'cosine_similarity_hist' in args.visualizations:
@@ -597,6 +695,28 @@ def visualize_test_umap(test_set, path, names, image_emb, audio_emb, plots_dir,
         'Test {} UMAP epoch {:04d}'.format(test_set, epoch),
         plot_path,
         args.point_size,
+        limits=axis_limits(coords),
+        draw_pairs=args.draw_pairs,
+    )
+
+
+def visualize_test_pca(test_set, path, names, image_emb, audio_emb, plots_dir,
+                       args):
+    embeddings = stack_modalities(image_emb, audio_emb)
+    reducer = make_pca(args)
+    coords = reducer.fit_transform(embeddings)
+
+    epoch = parse_epoch(path)
+    plot_path = plots_dir / 'pca' / 'test_{}_epoch_{:04d}.png'.format(
+        test_set, epoch)
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    plot_modality_pca(
+        coords,
+        len(names),
+        'Test {} PCA epoch {:04d}'.format(test_set, epoch),
+        plot_path,
+        args.point_size,
+        reducer,
         limits=axis_limits(coords),
         draw_pairs=args.draw_pairs,
     )
@@ -671,6 +791,9 @@ def visualize_test(embeddings_dir, plots_dir, args):
             path, image_embedding=args.image_embedding)
         if 'umap' in args.visualizations:
             visualize_test_umap(
+                test_set, path, names, image_emb, audio_emb, plots_dir, args)
+        if 'pca' in args.visualizations:
+            visualize_test_pca(
                 test_set, path, names, image_emb, audio_emb, plots_dir, args)
         if 'class_umap' in args.visualizations:
             visualize_test_class_umap(
