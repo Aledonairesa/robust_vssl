@@ -19,6 +19,13 @@ class AVENet(nn.Module):
 
         self.img_backbone_type = args.img_backbone_type
         self.aud_backbone_type = args.aud_backbone_type
+        self.embedding_dim = int(getattr(args, 'embedding_dim', 512))
+        if self.embedding_dim <= 0:
+            raise ValueError('embedding_dim must be positive')
+        self.resnet_projection_enabled = (
+            self.embedding_dim != 512
+            or getattr(args, 'force_resnet_projection', False)
+        )
         self.use_vision_blocks = args.use_vision_blocks
         self.use_audio_blocks = args.use_audio_blocks
         self.freeze_dino = args.freeze_dino
@@ -62,6 +69,11 @@ class AVENet(nn.Module):
         # Image backbone
         if self.img_backbone_type == 'resnet18':
             self.img_backbone = base_models.resnet18(modal='vision', pretrained=False)
+            self.img_proj = (
+                nn.Conv2d(512, self.embedding_dim, kernel_size=1)
+                if self.resnet_projection_enabled
+                else nn.Identity()
+            )
 
         elif self.img_backbone_type == 'dino_vit':
             self.img_backbone = AutoModel.from_pretrained(args.dino_model_name)
@@ -85,12 +97,17 @@ class AVENet(nn.Module):
             if self.use_vision_blocks:
                 encoder_layer = nn.TransformerEncoderLayer(d_model=768, nhead=12, batch_first=True)
                 self.vision_blocks = nn.TransformerEncoder(encoder_layer, num_layers=2)
-            self.img_proj = nn.Conv2d(768, 512, kernel_size=1)
+            self.img_proj = nn.Conv2d(
+                768, self.embedding_dim, kernel_size=1)
 
         # Audio backbone
-        self.aud_proj = None
         if self.aud_backbone_type == 'resnet18':
             self.aud_backbone = base_models.resnet18(modal='audio')
+            self.aud_proj = (
+                nn.Linear(512, self.embedding_dim)
+                if self.resnet_projection_enabled
+                else nn.Identity()
+            )
 
         elif self.aud_backbone_type == 'whisper':
             whisper_model = WhisperModel.from_pretrained(args.whisper_model_name)
@@ -104,7 +121,8 @@ class AVENet(nn.Module):
                     nhead=whisper_model.config.encoder_attention_heads,
                     batch_first=True)
                 self.audio_blocks = nn.TransformerEncoder(encoder_layer, num_layers=2)
-            self.aud_proj = nn.Linear(whisper_model.config.d_model, 512)
+            self.aud_proj = nn.Linear(
+                whisper_model.config.d_model, self.embedding_dim)
 
         elif self.aud_backbone_type == 'beats':
             self.aud_backbone = BEATsWrapper(args.beats_checkpoint)
@@ -117,13 +135,14 @@ class AVENet(nn.Module):
                     nhead=self.aud_backbone.num_attention_heads,
                     batch_first=True)
                 self.audio_blocks = nn.TransformerEncoder(encoder_layer, num_layers=2)
-            self.aud_proj = nn.Linear(self.aud_backbone.output_dim, 512)
+            self.aud_proj = nn.Linear(
+                self.aud_backbone.output_dim, self.embedding_dim)
 
         self.maxpool = nn.AdaptiveMaxPool2d((1, 1))
         self.modality_adversary = None
         if self.use_modality_adversary:
             self.modality_adversary = ModalityAdversary(
-                embedding_dim=512,
+                embedding_dim=self.embedding_dim,
                 hidden_dim=512,
                 num_layers=5,
                 grl_scale=1.0,
@@ -133,7 +152,8 @@ class AVENet(nn.Module):
         modules_to_init = []
         if self.aud_backbone_type == 'resnet18':
             modules_to_init.append(self.aud_backbone)
-        elif self.aud_proj is not None:
+            modules_to_init.append(self.aud_proj)
+        else:
             if self.use_audio_blocks:
                 modules_to_init.append(self.audio_blocks)
             modules_to_init.append(self.aud_proj)
@@ -142,6 +162,7 @@ class AVENet(nn.Module):
             modules_to_init.append(self.img_proj)
         else:
             modules_to_init.append(self.img_backbone)
+            modules_to_init.append(self.img_proj)
         if self.modality_adversary is not None:
             modules_to_init.append(self.modality_adversary)
 
@@ -182,11 +203,12 @@ class AVENet(nn.Module):
             patch_grid = patch_embeddings.reshape(B, H, W, 768)
             img_feat = patch_grid.permute(0, 3, 1, 2) # B x 768 x H x W
             
-            # Project to match audio feature depth
-            img_feat = self.img_proj(img_feat) # B x 512 x H x W
         else:
-            img_feat = self.img_backbone(image) # B x 512 x 14 x 14
-            
+            img_feat = self.img_backbone(image) # B x 512 x H x W
+
+        # Project both modalities into the requested shared embedding space.
+        # For legacy 512-dimensional ResNet runs this is an identity mapping.
+        img_feat = self.img_proj(img_feat) # B x embedding_dim x H x W
         img_feat = F.normalize(img_feat, dim=1)
         
         # Audio features
@@ -213,6 +235,7 @@ class AVENet(nn.Module):
         else:
             aud_feat = self.aud_backbone(aud) # B x C x H x W
             aud_feat = self.maxpool(aud_feat).view(B,-1) # B x C
+            aud_feat = self.aud_proj(aud_feat)
         aud_feat = F.normalize(aud_feat, dim=1)
         
         # Calculate similarity maps

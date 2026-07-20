@@ -216,6 +216,60 @@ def temperature_checkpoint_metadata(model, args):
     }
 
 
+def embedding_checkpoint_metadata(model):
+    model_without_dp = model.module if isinstance(
+        model, torch.nn.DataParallel) else model
+    return {
+        'embedding_dim': model_without_dp.embedding_dim,
+        'resnet_projection_enabled': (
+            model_without_dp.resnet_projection_enabled),
+    }
+
+
+def validate_embedding_checkpoint(checkpoint, model):
+    model_without_dp = model.module if isinstance(
+        model, torch.nn.DataParallel) else model
+
+    # Checkpoints created before configurable dimensions were introduced are
+    # legacy 512-dimensional models without ResNet projection heads.
+    checkpoint_dim = int(checkpoint.get('embedding_dim', 512))
+    if checkpoint_dim != model_without_dp.embedding_dim:
+        raise ValueError(
+            'Embedding dimension mismatch: checkpoint uses {} but the '
+            'current model uses {}. Pass --embedding_dim {}.'.format(
+                checkpoint_dim,
+                model_without_dp.embedding_dim,
+                checkpoint_dim,
+            ))
+
+    uses_resnet = (
+        model_without_dp.img_backbone_type == 'resnet18'
+        or model_without_dp.aud_backbone_type == 'resnet18'
+    )
+    if not uses_resnet:
+        return
+
+    checkpoint_projection = bool(
+        checkpoint.get('resnet_projection_enabled', False))
+    current_projection = model_without_dp.resnet_projection_enabled
+    if checkpoint_projection != current_projection:
+        checkpoint_description = (
+            'learned ResNet projection heads'
+            if checkpoint_projection
+            else 'legacy ResNet outputs without projection heads'
+        )
+        current_description = (
+            'learned ResNet projection heads'
+            if current_projection
+            else 'legacy ResNet outputs without projection heads'
+        )
+        raise ValueError(
+            'ResNet projection mismatch: checkpoint uses {}, but the current '
+            'model uses {}. Match the checkpoint\'s --embedding_dim and '
+            '--force_resnet_projection settings.'.format(
+                checkpoint_description, current_description))
+
+
 def validate_temperature_checkpoint(checkpoint, args, resume=False):
     state_dict = checkpoint.get('state_dict', {})
     has_temperature_v = any(
@@ -969,6 +1023,8 @@ def main(args):
         raise ValueError('atp_cu_start_epoch must be at least 1')
     if args.modality_adv_weight < 0:
         raise ValueError('modality_adv_weight must be non-negative')
+    if args.embedding_dim <= 0:
+        raise ValueError('embedding_dim must be positive')
     if args.temperature <= 0:
         raise ValueError('temperature must be positive')
     if args.temperature_lr_scale <= 0:
@@ -1045,6 +1101,7 @@ def main(args):
             print("=> loading testing checkpoint '{}'".format(args.test))
             checkpoint = torch.load(args.test, map_location=torch.device('cpu'))
             validate_temperature_checkpoint(checkpoint, args)
+            validate_embedding_checkpoint(checkpoint, model_without_dp)
             epoch = checkpoint['epoch']
             state_dict = checkpoint['state_dict']
             
@@ -1100,6 +1157,7 @@ def main(args):
         if os.path.isfile(args.resume):
             checkpoint = torch.load(args.resume, map_location='cpu')
             validate_temperature_checkpoint(checkpoint, args, resume=True)
+            validate_embedding_checkpoint(checkpoint, model_without_dp)
             args.start_epoch = checkpoint['epoch']+ 1
             args.iteration = checkpoint['iteration']
             best_metric = checkpoint.get(
@@ -1192,6 +1250,7 @@ def main(args):
                 'epoch': epoch,
                 'state_dict': state_dict,
                 **temperature_checkpoint_metadata(model, args),
+                **embedding_checkpoint_metadata(model),
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': checkpoint_metric,
@@ -1244,6 +1303,7 @@ def main(args):
                 'epoch': epoch,
                 'state_dict': state_dict,
                 **temperature_checkpoint_metadata(model, args),
+                **embedding_checkpoint_metadata(model),
                 'criterion': criterion.state_dict(),
                 'best_metric': best_metric,
                 'checkpoint_metric': args.checkpoint_metric,

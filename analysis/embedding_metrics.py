@@ -1,4 +1,6 @@
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import GroupShuffleSplit
 
 
 def mean_joint_angular_displacement_deg(previous_image_emb,
@@ -50,6 +52,89 @@ def mean_joint_angular_displacement_deg(previous_image_emb,
     joint_mean_radians = 0.5 * (
         image_angles.mean() + audio_angles.mean())
     return float(np.degrees(joint_mean_radians) / epoch_delta)
+
+
+def linear_separability_accuracy(image_emb, audio_emb, group_ids=None,
+                                 test_size=0.2, random_state=0,
+                                 regularization_c=1.0):
+    """Return held-out accuracy of a linear modality classifier.
+
+    The split is performed over paired-sample groups before constructing the
+    binary image/audio classification dataset. This keeps both modalities of
+    a pair, and any repeated samples sharing a group ID, entirely in either
+    the training or test partition.
+    """
+    image_emb = np.asarray(image_emb)
+    audio_emb = np.asarray(audio_emb)
+    if image_emb.shape != audio_emb.shape:
+        raise ValueError(
+            'Linear separability requires matching embedding shapes, got '
+            '{} and {}.'.format(image_emb.shape, audio_emb.shape))
+    if image_emb.ndim != 2:
+        raise ValueError(
+            'Linear separability expects 2D embedding arrays, got {}.'
+            .format(image_emb.shape))
+    if image_emb.shape[0] < 2:
+        raise ValueError(
+            'Linear separability requires at least two paired samples.')
+    if not np.isfinite(image_emb).all() or not np.isfinite(audio_emb).all():
+        raise ValueError(
+            'Linear separability embeddings contain non-finite values.')
+    if not 0 < test_size < 1:
+        raise ValueError(
+            'test_size must be between 0 and 1, got {}.'.format(test_size))
+    if regularization_c <= 0:
+        raise ValueError(
+            'regularization_c must be positive, got {}.'
+            .format(regularization_c))
+
+    num_pairs = image_emb.shape[0]
+    if group_ids is None:
+        groups = np.arange(num_pairs)
+    else:
+        groups = np.asarray(group_ids)
+        if groups.ndim != 1 or len(groups) != num_pairs:
+            raise ValueError(
+                'Linear separability requires one group ID per pair, got '
+                '{} IDs for {} pairs.'.format(groups.size, num_pairs))
+    if len(np.unique(groups)) < 2:
+        raise ValueError(
+            'Linear separability requires at least two sample groups.')
+
+    pair_indices = np.arange(num_pairs)
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=test_size,
+        random_state=random_state,
+    )
+    train_indices, test_indices = next(
+        splitter.split(pair_indices, groups=groups))
+
+    train_embeddings = np.concatenate([
+        image_emb[train_indices],
+        audio_emb[train_indices],
+    ], axis=0)
+    train_labels = np.concatenate([
+        np.zeros(len(train_indices), dtype=np.int64),
+        np.ones(len(train_indices), dtype=np.int64),
+    ])
+    test_embeddings = np.concatenate([
+        image_emb[test_indices],
+        audio_emb[test_indices],
+    ], axis=0)
+    test_labels = np.concatenate([
+        np.zeros(len(test_indices), dtype=np.int64),
+        np.ones(len(test_indices), dtype=np.int64),
+    ])
+
+    classifier = LogisticRegression(
+        C=regularization_c,
+        solver='liblinear',
+        max_iter=2000,
+        random_state=random_state,
+    )
+    classifier.fit(train_embeddings, train_labels)
+    return float(classifier.score(test_embeddings, test_labels))
 
 
 def _centroids(image_emb, audio_emb):
@@ -198,6 +283,10 @@ def nn_overlap_at_10(image_emb, audio_emb):
     return _nearest_neighbor_overlap(image_emb, audio_emb, 10)
 
 
+def nn_overlap_at_50(image_emb, audio_emb):
+    return _nearest_neighbor_overlap(image_emb, audio_emb, 50)
+
+
 METRICS = {
     'centroid_distance': centroid_distance,
     'centroid_cosine_similarity': centroid_cosine_similarity,
@@ -210,4 +299,5 @@ METRICS = {
     'nn_overlap_at_1': nn_overlap_at_1,
     'nn_overlap_at_5': nn_overlap_at_5,
     'nn_overlap_at_10': nn_overlap_at_10,
+    'nn_overlap_at_50': nn_overlap_at_50,
 }

@@ -31,6 +31,13 @@ def get_arguments():
                         help='Testing set: VGGSS | IS3plus | AVSBench')
 
     parser.add_argument('--model_name', default='vgg', type=str, help='test files')
+    parser.add_argument('--embedding_dim', default=512, type=int,
+                        help='Shared image/audio embedding dimension')
+    parser.add_argument(
+        '--force_resnet_projection', action='store_true',
+        help='Use learned ResNet projection heads even when '
+             '--embedding_dim is 512. Non-512 dimensions always use them; '
+             'enable this for a projection-matched 512-dimensional control.')
     
     parser.add_argument('--img_backbone_type', default='resnet18', type=str, help='resnet18 | dino_vit')
     parser.add_argument('--dino_model_name', default='facebook/dinov3-vitb16-pretrain-lvd1689m', type=str, help='DINO ViT model name from HuggingFace')

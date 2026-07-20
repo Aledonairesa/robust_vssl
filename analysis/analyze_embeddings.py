@@ -21,6 +21,7 @@ try:
     )
     from embedding_metrics import (
         METRICS,
+        linear_separability_accuracy,
         mean_joint_angular_displacement_deg,
     )
     from retrieval_metrics import (
@@ -39,6 +40,7 @@ except ImportError:
     )
     from analysis.embedding_metrics import (
         METRICS,
+        linear_separability_accuracy,
         mean_joint_angular_displacement_deg,
     )
     from analysis.retrieval_metrics import (
@@ -140,8 +142,45 @@ def load_embedding_file(path, image_embedding='positive_mask_mean'):
     return names, image_emb, audio_emb
 
 
+def avsbench_representative_indices(names):
+    grouped = {}
+    passthrough_indices = []
+    for idx, name in enumerate(names):
+        match = AVSBENCH_FRAME_PATTERN.match(str(name))
+        if match is None:
+            passthrough_indices.append(idx)
+            continue
+
+        uid = match.group(1)
+        frame_idx = int(match.group(2))
+        grouped.setdefault(uid, []).append((frame_idx, idx))
+
+    selected_indices = list(passthrough_indices)
+    for uid in sorted(grouped):
+        frame_indices = sorted(grouped[uid])
+        frame_to_idx = {frame_idx: idx for frame_idx, idx in frame_indices}
+        if 2 in frame_to_idx:
+            selected_indices.append(frame_to_idx[2])
+        else:
+            selected_indices.append(frame_indices[len(frame_indices) // 2][1])
+    return np.asarray(sorted(selected_indices), dtype=int)
+
+
+def prepare_linear_separability_inputs(dataset, names, image_emb, audio_emb):
+    names = np.asarray(names)
+    if dataset != 'AVSBench':
+        return names, image_emb, audio_emb
+
+    selected_indices = avsbench_representative_indices(names)
+    return (
+        names[selected_indices],
+        image_emb[selected_indices],
+        audio_emb[selected_indices],
+    )
+
+
 def compute_metrics(path, names=None, image_emb=None, audio_emb=None,
-                    image_embedding='positive_mask_mean'):
+                    image_embedding='positive_mask_mean', dataset=None):
     if names is None or image_emb is None or audio_emb is None:
         names, image_emb, audio_emb = load_embedding_file(
             path, image_embedding=image_embedding)
@@ -153,6 +192,14 @@ def compute_metrics(path, names=None, image_emb=None, audio_emb=None,
     }
     for metric_name, metric_fn in METRICS.items():
         row[metric_name] = metric_fn(image_emb, audio_emb)
+    probe_names, probe_image_emb, probe_audio_emb = (
+        prepare_linear_separability_inputs(
+            dataset, names, image_emb, audio_emb))
+    row['linear_separability_accuracy'] = linear_separability_accuracy(
+        probe_image_emb,
+        probe_audio_emb,
+        group_ids=probe_names,
+    )
     return row
 
 
@@ -201,28 +248,7 @@ def align_previous_validation_embeddings(current_names, previous_names,
 
 
 def reduce_avsbench_for_retrieval(names, image_emb, audio_emb, labels):
-    grouped = {}
-    passthrough_indices = []
-    for idx, name in enumerate(names):
-        match = AVSBENCH_FRAME_PATTERN.match(str(name))
-        if match is None:
-            passthrough_indices.append(idx)
-            continue
-
-        uid = match.group(1)
-        frame_idx = int(match.group(2))
-        grouped.setdefault(uid, []).append((frame_idx, idx))
-
-    selected_indices = list(passthrough_indices)
-    for uid in sorted(grouped):
-        frame_indices = sorted(grouped[uid])
-        frame_to_idx = {frame_idx: idx for frame_idx, idx in frame_indices}
-        if 2 in frame_to_idx:
-            selected_indices.append(frame_to_idx[2])
-        else:
-            selected_indices.append(frame_indices[len(frame_indices) // 2][1])
-
-    selected_indices = np.asarray(sorted(selected_indices), dtype=int)
+    selected_indices = avsbench_representative_indices(names)
     return (
         names[selected_indices],
         image_emb[selected_indices],
@@ -250,7 +276,8 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
 
         row = compute_metrics(
             path, names, image_emb, audio_emb,
-            image_embedding=image_embedding)
+            image_embedding=image_embedding,
+            dataset=VAL_BROAD_CLASS_SET)
         row['split'] = 'val'
         row['dataset'] = VAL_BROAD_CLASS_SET
         if previous is None:
@@ -394,7 +421,8 @@ def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
 
             row = compute_metrics(
                 path, names, image_emb, audio_emb,
-                image_embedding=image_embedding)
+                image_embedding=image_embedding,
+                dataset=current_test_set)
             row['split'] = 'test'
             row['test_set'] = current_test_set
             rows.append(row)
@@ -527,6 +555,8 @@ def plot_val_metrics(rows, plots_dir):
         ax.set_xlabel('Epoch')
         ax.set_ylabel(metric_name)
         ax.set_title('Validation {}'.format(metric_name))
+        if metric_name == 'linear_separability_accuracy':
+            ax.set_ylim(0.45, 1.01)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         plot_path = plots_dir / 'val_{}.png'.format(metric_name)
