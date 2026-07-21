@@ -19,6 +19,7 @@ try:
         compute_topk_retrieval_rows,
         plot_class_metric_outputs,
     )
+    from clustering_metrics import semantic_clustering_metrics
     from embedding_metrics import (
         METRICS,
         linear_separability_accuracy,
@@ -38,6 +39,7 @@ except ImportError:
         compute_topk_retrieval_rows,
         plot_class_metric_outputs,
     )
+    from analysis.clustering_metrics import semantic_clustering_metrics
     from analysis.embedding_metrics import (
         METRICS,
         linear_separability_accuracy,
@@ -316,6 +318,11 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
             continue
 
         print_broad_class_summary(VAL_BROAD_CLASS_SET, epoch, diagnostics)
+        row.update(semantic_clustering_metrics(
+            image_emb,
+            audio_emb,
+            labels,
+        ))
         row.update(compute_semantic_retrieval_metrics(
             image_emb,
             audio_emb,
@@ -451,6 +458,11 @@ def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
                     '{}/{} samples'
                     .format(epoch, len(_retrieval_names), len(names)))
 
+            row.update(semantic_clustering_metrics(
+                retrieval_image_emb,
+                retrieval_audio_emb,
+                retrieval_labels,
+            ))
             row.update(compute_semantic_retrieval_metrics(
                 retrieval_image_emb,
                 retrieval_audio_emb,
@@ -541,6 +553,8 @@ def plot_val_metrics(rows, plots_dir):
         'split',
         'dataset',
         'test_set',
+        'joint_clustering_num_classes',
+        'joint_clustering_num_samples',
     }
     metric_names = [
         key for key in rows[0].keys()
