@@ -1,6 +1,10 @@
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import silhouette_score
 from sklearn.model_selection import GroupShuffleSplit
+
+
+CLASS_GAP_COHERENCE = 'class_gap_coherence'
 
 
 def mean_joint_angular_displacement_deg(previous_image_emb,
@@ -228,6 +232,270 @@ def mean_unpaired_cosine_similarity(image_emb, audio_emb):
     return float(unpaired.mean())
 
 
+def minimum_cosine_distance(image_emb, audio_emb, block_size=1024):
+    """Return symmetric cross-modal nearest-neighbor cosine distance.
+
+    For every image embedding, this computes the cosine distance to its
+    nearest audio embedding, and vice versa. The returned scalar gives equal
+    weight to the two directional means:
+
+        0.5 * (mean_i(1 - max_j cos(image_i, audio_j))
+               + mean_j(1 - max_i cos(image_i, audio_j)))
+
+    Inputs are assumed to be L2-normalized; this function deliberately does
+    not normalize them. Similarities are computed in two-dimensional blocks
+    so every sample is used without materializing the full cross-modal
+    similarity matrix.
+    """
+    image_emb = np.asarray(image_emb, dtype=np.float64)
+    audio_emb = np.asarray(audio_emb, dtype=np.float64)
+    if image_emb.ndim != 2 or audio_emb.ndim != 2:
+        raise ValueError(
+            'Minimum cosine distance expects 2D embedding arrays, got '
+            '{} and {}.'.format(image_emb.shape, audio_emb.shape))
+    if image_emb.shape[1] != audio_emb.shape[1]:
+        raise ValueError(
+            'Minimum cosine distance requires matching embedding '
+            'dimensions, got {} and {}.'.format(
+                image_emb.shape[1], audio_emb.shape[1]))
+    if (
+            image_emb.shape[0] == 0
+            or audio_emb.shape[0] == 0
+            or image_emb.shape[1] == 0):
+        raise ValueError(
+            'Minimum cosine distance requires non-empty embeddings.')
+    if not np.isfinite(image_emb).all() or not np.isfinite(audio_emb).all():
+        raise ValueError(
+            'Minimum cosine distance embeddings contain non-finite values.')
+    if (
+            isinstance(block_size, (bool, np.bool_))
+            or not isinstance(block_size, (int, np.integer))
+            or block_size <= 0):
+        raise ValueError(
+            'block_size must be a positive integer, got {!r}.'.format(
+                block_size))
+
+    num_images = image_emb.shape[0]
+    num_audio = audio_emb.shape[0]
+    image_max_similarities = np.full(num_images, -np.inf)
+    audio_max_similarities = np.full(num_audio, -np.inf)
+
+    for image_start in range(0, num_images, block_size):
+        image_end = min(image_start + block_size, num_images)
+        image_block = image_emb[image_start:image_end]
+        block_image_maxima = np.full(image_end - image_start, -np.inf)
+
+        for audio_start in range(0, num_audio, block_size):
+            audio_end = min(audio_start + block_size, num_audio)
+            similarities = (
+                image_block @ audio_emb[audio_start:audio_end].T)
+            block_image_maxima = np.maximum(
+                block_image_maxima,
+                similarities.max(axis=1),
+            )
+            audio_max_similarities[audio_start:audio_end] = np.maximum(
+                audio_max_similarities[audio_start:audio_end],
+                similarities.max(axis=0),
+            )
+
+        image_max_similarities[image_start:image_end] = block_image_maxima
+
+    # Unit-normalized vectors have cosine similarities in [-1, 1]. Clipping
+    # removes only floating-point excursions outside that theoretical range.
+    image_max_similarities = np.clip(
+        image_max_similarities, -1.0, 1.0)
+    audio_max_similarities = np.clip(
+        audio_max_similarities, -1.0, 1.0)
+    image_to_audio = 1.0 - image_max_similarities
+    audio_to_image = 1.0 - audio_max_similarities
+    return float(
+        0.5 * (image_to_audio.mean() + audio_to_image.mean()))
+
+
+def modality_silhouette_score(image_emb, audio_emb):
+    """Return the Euclidean silhouette score of the modality labels.
+
+    Image and audio embeddings are stacked into one sample set and assigned
+    their respective modality labels. A high score means the modalities form
+    compact, separated clusters; a score near zero means that modality does
+    not explain the embedding geometry well. Negative scores are retained
+    because they indicate that samples are closer, on average, to the other
+    modality than to their own.
+
+    Inputs are assumed to be L2-normalized; this function deliberately does
+    not normalize or subsample them.
+    """
+    image_emb = np.asarray(image_emb, dtype=np.float64)
+    audio_emb = np.asarray(audio_emb, dtype=np.float64)
+    if image_emb.shape != audio_emb.shape:
+        raise ValueError(
+            'Modality silhouette score requires matching embedding shapes, '
+            'got {} and {}.'.format(image_emb.shape, audio_emb.shape))
+    if image_emb.ndim != 2:
+        raise ValueError(
+            'Modality silhouette score expects 2D embedding arrays, got {}.'
+            .format(image_emb.shape))
+    if image_emb.shape[0] < 2 or image_emb.shape[1] == 0:
+        raise ValueError(
+            'Modality silhouette score requires at least two paired samples '
+            'and one embedding dimension.')
+    if not np.isfinite(image_emb).all() or not np.isfinite(audio_emb).all():
+        raise ValueError(
+            'Modality silhouette score embeddings contain non-finite values.')
+
+    joint_emb = np.concatenate([image_emb, audio_emb], axis=0)
+    modality_labels = np.concatenate([
+        np.zeros(image_emb.shape[0], dtype=np.int64),
+        np.ones(audio_emb.shape[0], dtype=np.int64),
+    ])
+    return float(silhouette_score(
+        joint_emb,
+        modality_labels,
+        metric='euclidean',
+    ))
+
+
+def gaussian_wasserstein_uniformity(image_emb, audio_emb):
+    """Return joint Gaussian Wasserstein uniformity (higher is better).
+
+    The image and audio embeddings are treated as samples from one shared
+    embedding distribution. Inputs are assumed to be L2-normalized; this
+    function deliberately does not normalize them.
+
+    The metric is the negative quadratic Wasserstein distance between the
+    Gaussian fitted to the joint empirical distribution and N(0, I / d).
+    Its maximum is zero.
+    """
+    image_emb = np.asarray(image_emb, dtype=np.float64)
+    audio_emb = np.asarray(audio_emb, dtype=np.float64)
+    if image_emb.shape != audio_emb.shape:
+        raise ValueError(
+            'Gaussian Wasserstein uniformity requires matching embedding '
+            'shapes, got {} and {}.'.format(
+                image_emb.shape, audio_emb.shape))
+    if image_emb.ndim != 2:
+        raise ValueError(
+            'Gaussian Wasserstein uniformity expects 2D embedding arrays, '
+            'got {}.'.format(image_emb.shape))
+    if image_emb.shape[0] == 0 or image_emb.shape[1] == 0:
+        raise ValueError(
+            'Gaussian Wasserstein uniformity requires non-empty embeddings.')
+    if not np.isfinite(image_emb).all() or not np.isfinite(audio_emb).all():
+        raise ValueError(
+            'Gaussian Wasserstein uniformity embeddings contain non-finite '
+            'values.')
+
+    joint_emb = np.concatenate([image_emb, audio_emb], axis=0)
+    sample_mean = joint_emb.mean(axis=0)
+    centered = joint_emb - sample_mean
+
+    # This is the covariance of the empirical distribution, whose samples
+    # each have mass 1 / N. The 1 / N divisor also makes the metric invariant
+    # to cloning the complete sample set.
+    covariance = centered.T @ centered / joint_emb.shape[0]
+    covariance = 0.5 * (covariance + covariance.T)
+
+    # Covariance is positive semidefinite. Clip negative eigenvalues caused
+    # only by floating-point roundoff before taking their square roots.
+    eigenvalues = np.linalg.eigvalsh(covariance)
+    eigenvalues = np.clip(eigenvalues, 0.0, None)
+
+    # This is algebraically equivalent to
+    #
+    # ||mean||^2 + 1 + tr(covariance)
+    #     - (2 / sqrt(d)) * tr(sqrt(covariance)),
+    #
+    # but avoids cancellation near the ideal covariance I / d.
+    target_standard_deviation = 1.0 / np.sqrt(joint_emb.shape[1])
+    wasserstein_squared = (
+        np.dot(sample_mean, sample_mean)
+        + np.square(
+            np.sqrt(eigenvalues) - target_standard_deviation).sum()
+    )
+    return -float(np.sqrt(wasserstein_squared))
+
+
+def class_gap_coherence(image_emb, audio_emb, labels,
+                        unknown_label='unknown'):
+    """Return the coherence of broad-class modality-gap vectors.
+
+    Each known broad class receives equal weight. For every class, image and
+    audio embeddings are averaged separately and the two centroid directions
+    are L2-normalized. If ``g_c`` is the audio-minus-image displacement between
+    those directions for class ``c``, the score is
+
+        ||mean_c(g_c)||^2 / mean_c(||g_c||^2).
+
+    The score is in [0, 1] up to floating-point roundoff. A value near one
+    means that class gaps share a common displacement, whereas a value near
+    zero means that their directions cancel or vary strongly by class.
+
+    Sample embeddings are not normalized internally. Unknown samples are
+    excluded. The metric is undefined and returns NaN when fewer than two
+    known classes remain, a class centroid has zero norm, or every class gap
+    vanishes.
+    """
+    image_emb = np.asarray(image_emb, dtype=np.float64)
+    audio_emb = np.asarray(audio_emb, dtype=np.float64)
+    labels = np.asarray(labels)
+    if image_emb.shape != audio_emb.shape:
+        raise ValueError(
+            'Class-gap coherence requires matching embedding shapes, got '
+            '{} and {}.'.format(image_emb.shape, audio_emb.shape))
+    if image_emb.ndim != 2:
+        raise ValueError(
+            'Class-gap coherence expects 2D embedding arrays, got {}.'
+            .format(image_emb.shape))
+    if labels.ndim != 1 or len(labels) != image_emb.shape[0]:
+        raise ValueError(
+            'Class-gap coherence requires one label per embedding pair, got '
+            '{} labels for {} pairs.'.format(labels.size, image_emb.shape[0]))
+
+    known_mask = labels != unknown_label
+    if (
+            not np.isfinite(image_emb[known_mask]).all()
+            or not np.isfinite(audio_emb[known_mask]).all()):
+        raise ValueError(
+            'Class-gap coherence embeddings contain non-finite values.')
+
+    known_labels = labels[known_mask]
+    classes = np.unique(known_labels)
+    if len(classes) < 2:
+        return float('nan')
+
+    known_image = image_emb[known_mask]
+    known_audio = audio_emb[known_mask]
+    image_centroids = np.stack([
+        known_image[known_labels == class_name].mean(axis=0)
+        for class_name in classes
+    ])
+    audio_centroids = np.stack([
+        known_audio[known_labels == class_name].mean(axis=0)
+        for class_name in classes
+    ])
+    image_norms = np.linalg.norm(
+        image_centroids, axis=1, keepdims=True)
+    audio_norms = np.linalg.norm(
+        audio_centroids, axis=1, keepdims=True)
+    if (
+            np.any(image_norms[:, 0] == 0.0)
+            or np.any(audio_norms[:, 0] == 0.0)):
+        return float('nan')
+
+    gap_vectors = (
+        audio_centroids / audio_norms
+        - image_centroids / image_norms
+    )
+    mean_squared_gap = float(
+        np.mean(np.sum(gap_vectors * gap_vectors, axis=1)))
+    if mean_squared_gap == 0.0:
+        return float('nan')
+
+    mean_gap = gap_vectors.mean(axis=0)
+    coherence = float(np.dot(mean_gap, mean_gap) / mean_squared_gap)
+    return float(np.clip(coherence, 0.0, 1.0))
+
+
 def global_separability(image_emb, audio_emb):
     similarities = image_emb @ audio_emb.T
     positive = np.diag(similarities)
@@ -292,6 +560,9 @@ METRICS = {
     'centroid_cosine_similarity': centroid_cosine_similarity,
     'mean_paired_cosine_similarity': mean_paired_cosine_similarity,
     'mean_unpaired_cosine_similarity': mean_unpaired_cosine_similarity,
+    'minimum_cosine_distance': minimum_cosine_distance,
+    'modality_silhouette_score': modality_silhouette_score,
+    'gaussian_wasserstein_uniformity': gaussian_wasserstein_uniformity,
     'global_separability': global_separability,
     'image_intra_spread': image_intra_spread,
     'audio_intra_spread': audio_intra_spread,

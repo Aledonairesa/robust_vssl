@@ -22,6 +22,7 @@ try:
     from clustering_metrics import semantic_clustering_metrics
     from embedding_metrics import (
         METRICS,
+        class_gap_coherence,
         linear_separability_accuracy,
         mean_joint_angular_displacement_deg,
     )
@@ -42,6 +43,7 @@ except ImportError:
     from analysis.clustering_metrics import semantic_clustering_metrics
     from analysis.embedding_metrics import (
         METRICS,
+        class_gap_coherence,
         linear_separability_accuracy,
         mean_joint_angular_displacement_deg,
     )
@@ -318,6 +320,11 @@ def analyze_val(embeddings_dir, analysis_dir, broad_classes_dir,
             continue
 
         print_broad_class_summary(VAL_BROAD_CLASS_SET, epoch, diagnostics)
+        row['class_gap_coherence'] = class_gap_coherence(
+            image_emb,
+            audio_emb,
+            labels,
+        )
         row.update(semantic_clustering_metrics(
             image_emb,
             audio_emb,
@@ -458,6 +465,11 @@ def analyze_test(embeddings_dir, analysis_dir, test_set, broad_classes_dir,
                     '{}/{} samples'
                     .format(epoch, len(_retrieval_names), len(names)))
 
+            row['class_gap_coherence'] = class_gap_coherence(
+                retrieval_image_emb,
+                retrieval_audio_emb,
+                retrieval_labels,
+            )
             row.update(semantic_clustering_metrics(
                 retrieval_image_emb,
                 retrieval_audio_emb,
