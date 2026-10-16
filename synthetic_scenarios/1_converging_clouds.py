@@ -21,11 +21,11 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-from analysis.embedding_metrics import (  # noqa: E402
+from embedding_metrics import (  # noqa: E402
     centroid_cosine_similarity,
     linear_separability_accuracy,
     mean_paired_cosine_similarity,
@@ -34,7 +34,7 @@ from analysis.embedding_metrics import (  # noqa: E402
     nn_overlap_at_50,
     relative_modality_gap,
 )
-from analysis.extra_plots.plot_toy_opposite_poles import (  # noqa: E402
+from opposite_pole_clouds import (  # noqa: E402
     draw_unit_sphere,
 )
 
@@ -62,13 +62,7 @@ STAGE_TITLES = (
     '5. Complete overlap\n0° separation',
 )
 
-DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT
-    / 'outputs'
-    / 'extra_plots'
-    / 'synthetic_experiments'
-    / '01_east_west_convergence'
-)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / 'outputs' / 'converging_clouds'
 
 METRICS = (
     (

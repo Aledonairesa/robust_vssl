@@ -11,24 +11,25 @@ Outputs: unit_spheres.png and metrics.csv in the output directory.
 
 import argparse
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-from analysis.extra_plots.plot_synthetic_east_west_convergence import (  # noqa: E402
-    EMBEDDING_DIMENSION,
-    METRICS,
-    NUM_PAIRS,
-    calculate_metrics,
-    mildly_suboptimal_pairing,
-    plot_arrangements,
-    write_metrics_csv,
-)
+# Load the numbered scenario module; its filename is not a Python identifier.
+_shared_clouds = import_module('1_converging_clouds')
+EMBEDDING_DIMENSION = _shared_clouds.EMBEDDING_DIMENSION
+METRICS = _shared_clouds.METRICS
+NUM_PAIRS = _shared_clouds.NUM_PAIRS
+calculate_metrics = _shared_clouds.calculate_metrics
+mildly_suboptimal_pairing = _shared_clouds.mildly_suboptimal_pairing
+plot_arrangements = _shared_clouds.plot_arrangements
+write_metrics_csv = _shared_clouds.write_metrics_csv
 
 
 VIEW_ELEVATION = 25.0
@@ -65,13 +66,7 @@ FIGURE_SUBTITLE = (
     'the remainder stays exactly fixed'
 )
 
-DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT
-    / 'outputs'
-    / 'extra_plots'
-    / 'synthetic_experiments'
-    / '06_progressive_semicircle_overlap'
-)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / 'outputs' / 'hybrid_bands'
 
 
 def parse_args():

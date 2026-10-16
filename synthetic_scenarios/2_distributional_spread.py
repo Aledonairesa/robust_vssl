@@ -9,26 +9,27 @@ Outputs: unit_spheres.png and metrics.csv in the output directory.
 
 import argparse
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-from analysis.extra_plots.plot_synthetic_east_west_convergence import (  # noqa: E402
-    METRICS,
-    NUM_PAIRS,
-    calculate_metrics,
-    mildly_suboptimal_pairing,
-    normalize_rows,
-    plot_arrangements,
-    rotation_about_y,
-    validate_arrangements,
-    write_metrics_csv,
-)
+# Load the numbered scenario module; its filename is not a Python identifier.
+_shared_clouds = import_module('1_converging_clouds')
+METRICS = _shared_clouds.METRICS
+NUM_PAIRS = _shared_clouds.NUM_PAIRS
+calculate_metrics = _shared_clouds.calculate_metrics
+mildly_suboptimal_pairing = _shared_clouds.mildly_suboptimal_pairing
+normalize_rows = _shared_clouds.normalize_rows
+plot_arrangements = _shared_clouds.plot_arrangements
+rotation_about_y = _shared_clouds.rotation_about_y
+validate_arrangements = _shared_clouds.validate_arrangements
+write_metrics_csv = _shared_clouds.write_metrics_csv
 
 
 TARGET_MODALITY_NOISE_STD = 0.025
@@ -54,13 +55,7 @@ FIGURE_SUBTITLE = (
     'The modality centers remain fixed while both distributions broaden'
 )
 
-DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT
-    / 'outputs'
-    / 'extra_plots'
-    / 'synthetic_experiments'
-    / '02_east_west_progressive_spread'
-)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / 'outputs' / 'distributional_spread'
 
 
 def parse_args():

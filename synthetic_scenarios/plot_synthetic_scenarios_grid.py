@@ -10,6 +10,7 @@ Outputs: synthetic_scenarios_grid.png, .svg, and .pdf in the output directory.
 
 import argparse
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import matplotlib
@@ -19,23 +20,19 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-from analysis.extra_plots import (  # noqa: E402
-    plot_synthetic_east_west_convergence as scenario_1,
-    plot_synthetic_east_west_spread as scenario_2,
-    plot_synthetic_nearby_semicircle_pairings as scenario_3,
-    plot_synthetic_latitude_ring_convergence as scenario_4,
-    plot_synthetic_interleaved_spiral_spread as scenario_5,
-    plot_synthetic_progressive_semicircle_overlap as scenario_6,
-)
+scenario_1 = import_module('1_converging_clouds')
+scenario_2 = import_module('2_distributional_spread')
+scenario_3 = import_module('3_pair_alignment')
+scenario_4 = import_module('4_converging_rings')
+scenario_5 = import_module('5_interleaved_spirals')
+scenario_6 = import_module('6_hybrid_bands')
 
 
-DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT / 'outputs' / 'extra_plots' / 'synthetic_experiments'
-)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / 'outputs'
 DEFAULT_BASENAME = 'synthetic_scenarios_grid'
 
 IMAGE_COLOR = '#FF5959FF'

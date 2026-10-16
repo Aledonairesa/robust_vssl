@@ -9,25 +9,26 @@ Outputs: unit_spheres.png and metrics.csv in the output directory.
 
 import argparse
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-from analysis.extra_plots.plot_synthetic_east_west_convergence import (  # noqa: E402
-    METRICS,
-    plot_arrangements,
-    validate_arrangements,
-    write_metrics_csv,
-)
-from analysis.extra_plots.plot_toy_nearby_semicircles import (  # noqa: E402
+# Load the numbered scenario module; its filename is not a Python identifier.
+_shared_clouds = import_module('1_converging_clouds')
+METRICS = _shared_clouds.METRICS
+plot_arrangements = _shared_clouds.plot_arrangements
+validate_arrangements = _shared_clouds.validate_arrangements
+write_metrics_csv = _shared_clouds.write_metrics_csv
+from nearby_semicircle_bands import (  # noqa: E402
     make_nearby_semicircle_embeddings,
 )
-from analysis.extra_plots.plot_toy_opposite_poles_matched import (  # noqa: E402
+from optimal_pair_matching import (  # noqa: E402
     minimum_distance_pairing,
 )
 
@@ -55,13 +56,7 @@ FIGURE_SUBTITLE = (
     'only positive-pair connections change'
 )
 
-DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT
-    / 'outputs'
-    / 'extra_plots'
-    / 'synthetic_experiments'
-    / '03_nearby_semicircle_pairings'
-)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / 'outputs' / 'pair_alignment'
 
 PAIRING_SENSITIVE_METRICS = (
     'relative_modality_gap',
